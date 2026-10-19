@@ -35,13 +35,7 @@ Clients install **nothing**. (Optionally, a separate **client display mod** can 
 
 ### Configuration
 
-Config files are generated automatically on first run, and can also be edited directly in-game through the ModConfig config UI:
-
-| Game language | File |
-|---|---|
-| Chinese (Simplified / Traditional) | `BepInEx/config/com.peakmodding.RollOfTheScout.cfg` — Chinese sections / keys / descriptions |
-| Any other language | `BepInEx/config/com.peakmodding.RollOfTheScout.en.cfg` — English sections, camelCase keys, English descriptions |
-
+Config files are generated automatically on first run(`BepInEx/config/com.peakmodding.RollOfTheScout.cfg`), and can also be edited directly in-game through the ModConfig config UI.
 > If a new version adds options, an existing `.cfg` will **not** pick up the new keys — delete the old `.cfg` and restart to regenerate.
 
 ### Current class list (v1.0.0, as of Oct 18, 2026)
@@ -152,13 +146,7 @@ Welcome to join the PEAK community group ~ (QQ group: **814891614**; mod updates
 
 ### 模组配置
 
-配置文件将在首次运行自动生成，也可在游戏内的 ModConfig 配置界面直接修改：
-
-| 游戏语言 | 文件 |
-|---|---|
-| 中文（简体 / 繁体） | `BepInEx/config/com.peakmodding.RollOfTheScout.cfg` —— 中文分类 / 键名 / 说明 |
-| 其它任意语言 | `BepInEx/config/com.peakmodding.RollOfTheScout.en.cfg` —— 英文分类、驼峰键名、英文说明 |
-
+配置文件将在首次运行自动生成（`BepInEx/config/com.peakmodding.RollOfTheScout.cfg`），也可在游戏内的 ModConfig 配置界面直接修改。
 > 新版本若新增了配置项，**旧的 `.cfg` 不会自动补全新键** —— 请删除旧版 `.cfg` 后重启以重新生成。
 
 ### 当前版本职业一览（v1.0.0，截止至2026年10月18日）

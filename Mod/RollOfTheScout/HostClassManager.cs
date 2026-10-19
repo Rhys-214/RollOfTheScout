@@ -1526,6 +1526,9 @@ namespace RollOfTheScout
             // 第三方「头顶id显示」模组兼容层：限流重试挂补丁（不依赖是否在房间 / 关卡内）。
             PeakOverheadCompat.ThirdPartyOverheadNameCompat.Tick(Plugin.HarmonyInstance);
 
+            // 配置文件板块顺序修正（内部 2 秒节流）：游戏内改过配置后，把 BepInEx 排序过的 .cfg 顺序改回业务顺序。
+            ConfigFileOrder.Tick();
+
             // 原生字体叠加层所需的按键状态 / 过期提示 / 内容推送都在最前面结算，
             // 这样即使后续因「不在房间 / 在机场 / 模组关闭」提前返回，叠加层也能正确隐藏或清空。
             UpdateClassListInput();

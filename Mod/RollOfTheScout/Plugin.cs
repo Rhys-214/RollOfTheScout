@@ -28,8 +28,8 @@ namespace RollOfTheScout
         private void Awake()
         {
             Log = Logger;
-            // 配置文件按游戏语言择一加载（中文 / 英文两个 .cfg，见 ConfigLocalization / ModConfig）。
-            ModConfig.Initialize();
+            // 配置项按游戏语言本地化（见 ConfigLocalization）；绑定到插件自身的 Config，ModConfig 才能读到。
+            ModConfig.Initialize(Config);
 
             // 驱动器：所有职业逻辑都跑在它里面，并且只在主机上生效
             gameObject.AddComponent<HostClassManager>();

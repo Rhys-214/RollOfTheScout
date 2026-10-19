@@ -1,5 +1,4 @@
-using System.IO;
-using BepInEx;
+using System.Collections.Generic;
 using BepInEx.Configuration;
 
 namespace RollOfTheScout
@@ -7,11 +6,13 @@ namespace RollOfTheScout
     /// <summary>
     /// 全部可调参数。只有主机（房主）的配置文件有意义，其他玩家即使安装了本模组也不会生效。
     ///
-    /// 中英双语：本模组按「游戏语言」择一加载配置文件（见 <see cref="ConfigLocalization"/>）——
-    /// · 游戏语言为中文（简体 / 繁体）：使用 <c>com.peakmodding.RollOfTheScout.cfg</c>，Section / Key / Description 均为中文；
-    /// · 其它语言：使用 <c>com.peakmodding.RollOfTheScout.en.cfg</c>，Section 为英文名、Key 为小驼峰（camelCase）、Description 为英文。
-    /// 之所以 Section / Key 也随之本地化：PEAKModding 的 ModConfig 模组在局内配置界面里显示的正是
-    /// 「Section（分类页签）」与「Key（条目名）」（Description 不显示），两者必须是当前语言，界面才会跟着切换语言。
+    /// 中英双语：按「游戏语言」决定 Section / Key / Description 用中文还是英文（见 <see cref="ConfigLocalization"/>）——
+    /// · 游戏语言为中文（简体 / 繁体）：Section / Key / Description 用中文原文；
+    /// · 其它语言：Section 用英文名、Key 用小驼峰（camelCase）、Description 用英文。
+    /// Section / Key 也必须跟着本地化，因为 PEAKLib.ModConfig 在局内配置界面里显示的正是
+    /// 「Section（分类页签）」与「Key（条目名）」，靠它们界面语言才会切换。
+    /// 配置文件固定为插件自身的 <c>com.peakmodding.RollOfTheScout.cfg</c>（内容语言随游戏语言），
+    /// 必须如此才能被 PEAKLib.ModConfig 枚举到 —— 它只读取各插件的 plugin.Config。
     /// </summary>
     public static class ModConfig
     {
@@ -47,52 +48,61 @@ namespace RollOfTheScout
         public static LangwangConfig Langwang { get; private set; } = new LangwangConfig();
         public static ProgrammerConfig Programmer { get; private set; } = new ProgrammerConfig();
 
-        /// <summary>
-        /// 本模组实际使用的配置文件（按游戏语言在中文 / 英文两个文件之间择一）。
-        /// </summary>
-        public static ConfigFile File { get; private set; }
+        /// <summary>本次实际使用的配置文件（= 插件自身的 Config；PEAKLib.ModConfig 据此枚举配置项）。</summary>
+        internal static ConfigFile File { get; private set; }
 
-        public static void Initialize()
+        /// <summary>各 Section 在绑定时的出现顺序（用于把 BepInEx 排序后的 .cfg 板块顺序修正回业务顺序）。</summary>
+        internal static List<string> SectionOrder { get; } = new List<string>();
+
+        public static void Initialize(ConfigFile config)
         {
+            File = config;
+
+            // 先按游戏语言决定 Section / Key / Description 用中文还是英文，再绑定。
+            // ⚠ 必须使用 BepInEx 传入的「插件配置文件」本身（plugin.Config）：
+            //   PEAKLib.ModConfig 只枚举 Chainloader.PluginInfos 中各插件的 Instance.Config 来生成界面，
+            //   自建 ConfigFile 不会被它发现、也就读不到任何配置项。
+            //   因此本模组只有一份配置文件 com.peakmodding.RollOfTheScout.cfg，其内容语言随游戏语言变化。
             ConfigLocalization.DetectLanguage();
 
-            string fileName = ConfigLocalization.UseEnglish
-                ? "com.peakmodding.RollOfTheScout.en.cfg"
-                : "com.peakmodding.RollOfTheScout.cfg";
-            File = new ConfigFile(Path.Combine(Paths.ConfigPath, fileName), true);
-            File.SaveOnConfigSet = true;
+            General.Initialize(config);
+            Explorer.Initialize(config);
+            Leader.Initialize(config);
+            Logistician.Initialize(config);
+            Doctor.Initialize(config);
+            Assassin.Initialize(config);
+            Pandora.Initialize(config);
+            Necromancer.Initialize(config);
+            M.Initialize(config);
+            Savage.Initialize(config);
+            Scout.Initialize(config);
+            StandardBearer.Initialize(config);
+            Dancer.Initialize(config);
+            Daihao.Initialize(config);
+            Saint.Initialize(config);
+            Mage.Initialize(config);
+            Challenger.Initialize(config);
+            MasterChef.Initialize(config);
+            Cook.Initialize(config);
+            Pacifist.Initialize(config);
+            Hamster.Initialize(config);
+            Firefighter.Initialize(config);
+            Narcissist.Initialize(config);
+            LoneWolf.Initialize(config);
+            Gunner.Initialize(config);
+            Band.Initialize(config);
+            MilesSoul.Initialize(config);
+            Qu.Initialize(config);
+            Astronaut.Initialize(config);
+            Langwang.Initialize(config);
+            Programmer.Initialize(config);
 
-            General.Initialize(File);
-            Explorer.Initialize(File);
-            Leader.Initialize(File);
-            Logistician.Initialize(File);
-            Doctor.Initialize(File);
-            Assassin.Initialize(File);
-            Pandora.Initialize(File);
-            Necromancer.Initialize(File);
-            M.Initialize(File);
-            Savage.Initialize(File);
-            Scout.Initialize(File);
-            StandardBearer.Initialize(File);
-            Dancer.Initialize(File);
-            Daihao.Initialize(File);
-            Saint.Initialize(File);
-            Mage.Initialize(File);
-            Challenger.Initialize(File);
-            MasterChef.Initialize(File);
-            Cook.Initialize(File);
-            Pacifist.Initialize(File);
-            Hamster.Initialize(File);
-            Firefighter.Initialize(File);
-            Narcissist.Initialize(File);
-            LoneWolf.Initialize(File);
-            Gunner.Initialize(File);
-            Band.Initialize(File);
-            MilesSoul.Initialize(File);
-            Qu.Initialize(File);
-            Astronaut.Initialize(File);
-            Langwang.Initialize(File);
-            Programmer.Initialize(File);
+            // 首次运行（或新增键）时立即落盘：确保 {GUID}.cfg 一定生成，ModConfig 才有文件可读。
+            config.Save();
+
+            // BepInEx 写盘时会按 Section 名排序（中文字段按 Unicode 码点 → 板块顺序被打乱），
+            // 这里再按「绑定时的业务顺序」把板块顺序修正回来（通用 → 先驱 → 领袖 → … → 程序员）。
+            ConfigFileOrder.Apply(config, SectionOrder);
         }
 
         /// <summary>
@@ -103,8 +113,10 @@ namespace RollOfTheScout
         private static ConfigEntry<T> BindL<T>(ConfigFile config, string zhSection, string zhKey,
             T defaultValue, string zhDescription)
         {
+            string section = ConfigLocalization.Section(zhSection);
+            if (!SectionOrder.Contains(section)) SectionOrder.Add(section);   // 记录板块的业务顺序
             return config.Bind(
-                ConfigLocalization.Section(zhSection),
+                section,
                 ConfigLocalization.Key(zhSection, zhKey),
                 defaultValue,
                 ConfigLocalization.Desc(zhSection, zhKey, zhDescription));
