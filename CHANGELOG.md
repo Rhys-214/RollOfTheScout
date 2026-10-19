@@ -37,3 +37,13 @@
 ### 中文
 
 - 为本模组补充职业介绍文档（**ModClassIntroduction.md**，中英双语）。
+
+## 1.0.3
+
+### English
+
+- Attempted to optimize the mod to some extent.
+
+### 中文
+
+- 尝试对模组进行了一定优化。

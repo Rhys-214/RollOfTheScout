@@ -361,9 +361,18 @@ namespace RollOfTheScout
         // 救火队员·温暖臂膀：背人时的治疗定时器
         private float _firefighterHealTimer;
 
-        // 救火队员·火线救援：玩家稳定标识 → 上一帧是否处于「昏迷倒地（未死亡）」状态。
+        // 救火队员·火线救援：玩家稳定标识 → 上一次采样时是否处于「昏迷倒地（未死亡）」状态。
         // 用「false → true」的跳变识别「有玩家进入昏迷」，与 _wasDead 的死亡跳变同套思路。
         private readonly Dictionary<string, bool> _wasDowned = new Dictionary<string, bool>();
+
+        // 救火队员·火线救援：昏迷跳变的采样计时器。
+        // 该判定由「每帧」改为按 <see cref="DownedPollInterval"/> 采样：
+        // 采样间隔刻意取很小（0.15s ≈ 60fps 下约 9 帧），使「检测到昏迷」的延迟在实际游戏中不可感知，
+        // 从而在不改变效果语义的前提下，把「对全体玩家的每帧检查」降为「每 0.15 秒一次」。
+        private float _downedPollTimer;
+
+        /// <summary>「进入昏迷」跳变的采样间隔（秒）。取小值以兼顾「降低每帧开销」与「触发延迟不可感知」。</summary>
+        private const float DownedPollInterval = 0.15f;
 
         // 救火队员·尽职尽责：玩家稳定标识 → 上一轮轮询观测到的「骷髅形态（data.isSkeleton）」。
         //
@@ -517,8 +526,11 @@ namespace RollOfTheScout
         // 【零号守则】玩家稳定标识 → 「昏迷 → 无敌 + 传送到昏迷者处」的冷却结束时刻（Time.time）。
         private readonly Dictionary<string, float> _milesRuleZeroCooldownUntil = new Dictionary<string, float>();
 
-        // 【零号守则】玩家稳定标识 → 上一帧的「昏迷」快照（用于识别 false → true 跳变）。
+        // 【零号守则】玩家稳定标识 → 上一次采样时的「昏迷」快照（用于识别 false → true 跳变）。
         private readonly Dictionary<string, bool> _milesWasDowned = new Dictionary<string, bool>();
+
+        // 【零号守则】昏迷跳变的采样计时器（与救火队员·火线救援同频，见 PollDownedTransitions）。
+        private float _milesRuleZeroPollTimer;
 
         // 【零号守则·毅力助人】玩家稳定标识 → 待等量清除的石化目标值 / 校正截止时刻。
         // 使用「童军的毅力」帮助附近昏迷玩家时，游戏自身给使用者追加的石化会被等量抵消。
@@ -647,6 +659,34 @@ namespace RollOfTheScout
 
         /// <summary>「超然物外·免疫区块链」的日志去重集合（每局每人只提示一次，区块链是周期性结算，否则会刷屏）。</summary>
         private readonly HashSet<string> _transcendentBlockchainLogged = new HashSet<string>();
+
+        /// <summary>
+        /// 童军·行李「物品池」的解析缓存（配置字符串 → 已解析的预制体名列表）。
+        /// 该池由「每帧幂等补发」流程使用，若每次都 <c>ParseList</c>（内部 <c>Split</c>）会**每帧产生字符串垃圾**；
+        /// 这里只在配置字符串变化时重新解析。
+        /// </summary>
+        private string _scoutLuggagePoolRaw;
+        private readonly List<string> _scoutLuggagePool = new List<string>();
+
+        /// <summary>
+        /// 炊事员「后勤保障-食物池」的解析缓存（配置字符串 → 已解析的预制体名列表）。
+        /// 与童军行李池同理：只在配置字符串变化时重新解析，避免周期性抽取食物时的字符串分配。
+        /// </summary>
+        private string _cookFoodPoolRaw;
+        private readonly List<string> _cookFoodPool = new List<string>();
+
+        /// <summary>炊事员「食物池」：按配置字符串缓存的只读列表（<see cref="PickRandomFood"/> 用）。</summary>
+        private List<string> CookFoodPool()
+        {
+            string raw = ModConfig.Cook.FoodPool.Value;
+            if (raw != _cookFoodPoolRaw)
+            {
+                _cookFoodPoolRaw = raw;
+                _cookFoodPool.Clear();
+                _cookFoodPool.AddRange(WeightedPicker.ParseList(raw));
+            }
+            return _cookFoodPool;
+        }
 
         /// <summary>【NASA】额外加成覆盖的状态：蛛网 / 捕蝇草 / 诅咒。</summary>
         private static readonly CharacterAfflictions.STATUSTYPE[] NasaBonusTypes =
@@ -1571,6 +1611,10 @@ namespace RollOfTheScout
 
             if (!GameHandler.IsInGameplayScene) return;
 
+            // 摊开执行「临时物品喂食」队列（每帧最多 TransientFeedsPerFrame 次）：
+            // 把群体效果造成的同帧实例化爆发摊到后续若干帧，消除单帧尖峰（见 EnqueueTransientFeed 的说明）。
+            DrainTransientFeeds();
+
             // 复用同一个列表实例填充本帧的活跃角色，避免每帧新分配 List（名单只在主机内存、每帧重建）。
             // 各 Ensure* / Grant* / Tick* 只读取该列表，不会改动或长期持有；内部若再次取用角色名单，
             // 走的是会自行分配新列表的 HostApi.GetActiveCharacters()，与本缓冲互不影响。
@@ -1702,6 +1746,7 @@ namespace RollOfTheScout
             _hamsterSprintGuardUntil.Clear();
             _hamsterExtraTimer = 0f;
             _firefighterHealTimer = 0f;
+            _downedPollTimer = 0f;
             _loneWolfSoloTimer = 0f;
             _loneWolfDrowsyTimer = 0f;
             _gunnerCannonTimer = 0f;
@@ -1768,6 +1813,7 @@ namespace RollOfTheScout
             _milesUseGuardUntil.Clear();
             _milesPetrifySnapshot.Clear();
             _milesPetrifyTimer = 0f;
+            _milesRuleZeroPollTimer = 0f;
             _milesRemoteUseCooldownUntil.Clear();
             _milesPetrifyReduce.Clear();
             _milesRuleZeroCooldownUntil.Clear();
@@ -1802,6 +1848,7 @@ namespace RollOfTheScout
             _toasts.Clear();
             _toastExpiries.Clear();
             _toastVersion++;
+            _transientFeeds.Clear();   // 清掉上一局残留的「临时物品喂食」队列
             _classListHeld = false;
             _classListToggled = false;
             _classListPressUntil = 0f;
@@ -1887,6 +1934,7 @@ namespace RollOfTheScout
             _milesUseGuardUntil.Clear();
             _milesPetrifySnapshot.Clear();
             _milesPetrifyTimer = 0f;
+            _milesRuleZeroPollTimer = 0f;
             _milesRemoteUseCooldownUntil.Clear();
             _milesPetrifyReduce.Clear();
             _milesRuleZeroCooldownUntil.Clear();
@@ -1921,6 +1969,7 @@ namespace RollOfTheScout
             _toasts.Clear();
             _toastExpiries.Clear();
             _toastVersion++;
+            _transientFeeds.Clear();   // 清掉本局残留的「临时物品喂食」队列
             _classListHeld = false;
             _classListToggled = false;
             _classListPressUntil = 0f;
@@ -2065,6 +2114,9 @@ namespace RollOfTheScout
         /// </summary>
         private void EnsureCharacterEffects(List<Character> characters)
         {
+            // 职业不在场 → 直接跳过对全体玩家的遍历（判定为 O(1)；旧实现靠遍历账本，人数越多越贵）
+            if (!_ledger.HasClassInRoom(ClassType.Logistician)) return;
+
             int count = Mathf.Max(0, ModConfig.Logistician.InitialBackpacks.Value);
             if (count == 0) return;
 
@@ -2123,6 +2175,8 @@ namespace RollOfTheScout
         /// </summary>
         private void EnsureAssassinItems(List<Character> characters)
         {
+            if (!_ledger.HasClassInRoom(ClassType.Assassin)) return;
+
             int daggers = Mathf.Max(0, ModConfig.Assassin.InitDaggerCount.Value);
             int blowguns = Mathf.Max(0, ModConfig.Assassin.InitBlowgunCount.Value);
             if (daggers == 0 && blowguns == 0) return;
@@ -2184,6 +2238,8 @@ namespace RollOfTheScout
         /// </summary>
         private void EnsureChallengerItems(List<Character> characters)
         {
+            if (!_ledger.HasClassInRoom(ClassType.Challenger)) return;
+
             int hooks = Mathf.Max(0, ModConfig.Challenger.GoldenHookCount.Value);
             int gliders = Mathf.Max(0, ModConfig.Challenger.GliderCount.Value);
             if (hooks == 0 && gliders == 0) return;
@@ -2241,6 +2297,8 @@ namespace RollOfTheScout
         /// </summary>
         private void EnsureHamsterBackpack(List<Character> characters)
         {
+            if (!_ledger.HasClassInRoom(ClassType.Hamster)) return;
+
             int count = Mathf.Max(0, ModConfig.Hamster.InitialBackpacks.Value);
             if (count == 0) return;
 
@@ -2292,10 +2350,11 @@ namespace RollOfTheScout
         /// </summary>
         private void EnsureScoutLuggage(List<Character> characters)
         {
+            if (!_ledger.HasClassInRoom(ClassType.Scout)) return;
             if (!ModConfig.Scout.LuggageEnabled.Value) return;
 
             int count = Mathf.Clamp(ModConfig.Scout.LuggageItemCount.Value, 0, BackpackData.slots);
-            var pool = WeightedPicker.ParseList(ModConfig.Scout.LuggageItemPool.Value);
+            var pool = ScoutLuggagePool();
 
             foreach (var character in characters)
             {
@@ -2337,6 +2396,22 @@ namespace RollOfTheScout
         }
 
         /// <summary>
+        /// 童军·行李「物品池」：按配置字符串缓存解析结果（配置不变则复用，避免每帧 <c>ParseList</c> 的字符串分配）。
+        /// 返回的列表**只读**使用（<see cref="WeightedPicker.PickUnique"/> 内部会自行复制，不会改动它）。
+        /// </summary>
+        private List<string> ScoutLuggagePool()
+        {
+            string raw = ModConfig.Scout.LuggageItemPool.Value;
+            if (raw != _scoutLuggagePoolRaw)
+            {
+                _scoutLuggagePoolRaw = raw;
+                _scoutLuggagePool.Clear();
+                _scoutLuggagePool.AddRange(WeightedPicker.ParseList(raw));
+            }
+            return _scoutLuggagePool;
+        }
+
+        /// <summary>
         /// 自恋狂·化妆盒（每层）：每次进入新关卡强制覆盖 3 个物品栏写入配置数量的防晒喷雾。
         /// 用「强制覆盖」而非「优先空位」：需求明确要求覆盖 3 个物品栏，且与挑战者「顶级玩家」同理，
         /// 可覆盖「游玩途中转职为自恋狂（物品栏已满）」与「中途加入后从灵魂状态复活」两种情况。
@@ -2344,6 +2419,8 @@ namespace RollOfTheScout
         /// </summary>
         private void GrantNarcissistSunscreens(List<Character> characters)
         {
+            if (!_ledger.HasClassInRoom(ClassType.Narcissist)) return;
+
             int want = Mathf.Max(0, ModConfig.Narcissist.SunscreenCount.Value);
             string item = ModConfig.Narcissist.SunscreenItem.Value;
             if (want == 0 || string.IsNullOrEmpty(item)) return;
@@ -2474,6 +2551,8 @@ namespace RollOfTheScout
         /// </summary>
         private void GrantGunnerCannons(List<Character> characters)
         {
+            if (!_ledger.HasClassInRoom(ClassType.Gunner)) return;
+
             int want = Mathf.Max(0, ModConfig.Gunner.LevelCannonCount.Value);
             if (want == 0) return;
 
@@ -3209,13 +3288,18 @@ namespace RollOfTheScout
         }
 
         /// <summary>
-        /// 救火队员·火线救援的「进入昏迷」感知：每帧比较各角色 <c>data.fullyPassedOut &amp;&amp; !data.dead</c>
-        /// 与上一帧快照，出现 false → true 跳变即视为「有玩家进入昏迷」。
+        /// 救火队员·火线救援的「进入昏迷」感知：按「通用·状态轮询间隔」比较各角色
+        /// <c>data.fullyPassedOut &amp;&amp; !data.dead</c> 与上次采样快照，出现 false → true 跳变即视为「有玩家进入昏迷」。
         /// 首次观测只登记基线（与 _wasDead 同套思路），避免开局把已倒地者误判为「刚昏迷」。
         /// </summary>
         private void PollDownedTransitions(List<Character> characters)
         {
             if (!_ledger.HasClassInRoom(ClassType.Firefighter)) return;
+
+            // 按 DownedPollInterval 采样（默认 0.15s），不再每帧对全体玩家检查一遍。
+            _downedPollTimer += Time.deltaTime;
+            if (_downedPollTimer < DownedPollInterval) return;
+            _downedPollTimer = 0f;
 
             List<Character> justDowned = null;
             foreach (var character in characters)
@@ -3229,9 +3313,14 @@ namespace RollOfTheScout
                 bool downed = IsDowned(character);
                 if (_wasDowned.TryGetValue(id, out bool was))
                 {
+                    if (was == downed) continue;   // 状态未变：不必写回字典（旧实现每帧都写，属无谓开销）
+                    _wasDowned[id] = downed;
                     if (!was && downed) (justDowned ??= new List<Character>()).Add(character);
                 }
-                _wasDowned[id] = downed;
+                else
+                {
+                    _wasDowned[id] = downed;       // 首次登记：与旧实现一致，本帧不触发
+                }
             }
 
             if (justDowned == null) return;
@@ -3501,6 +3590,9 @@ namespace RollOfTheScout
         /// </summary>
         private void GrantLevelItems(List<Character> characters)
         {
+            // 先驱 / 医生 都不在场 → 无需遍历全体玩家
+            if (!_ledger.HasClassInRoom(ClassType.Explorer) && !_ledger.HasClassInRoom(ClassType.Doctor)) return;
+
             foreach (var character in characters)
             {
                 var type = _ledger.GetClass(character);
@@ -3550,6 +3642,8 @@ namespace RollOfTheScout
         /// </summary>
         private void GrantNecromancerBooks(List<Character> characters)
         {
+            if (!_ledger.HasClassInRoom(ClassType.Necromancer)) return;
+
             int want = Mathf.Max(0, ModConfig.Necromancer.BookCount.Value);
             if (want == 0) return;
 
@@ -3612,6 +3706,8 @@ namespace RollOfTheScout
         /// </summary>
         private void GrantStandardBearerFlags(List<Character> characters)
         {
+            if (!_ledger.HasClassInRoom(ClassType.StandardBearer)) return;
+
             int want = Mathf.Max(0, ModConfig.StandardBearer.FlagCount.Value);
             if (want == 0) return;
 
@@ -3675,6 +3771,8 @@ namespace RollOfTheScout
         /// </summary>
         private void GrantSaintFasting(List<Character> characters)
         {
+            if (!_ledger.HasClassInRoom(ClassType.Saint)) return;
+
             float amount = ModConfig.Saint.FastingHunger.Value;
             if (amount <= 0f) return;
 
@@ -3892,6 +3990,8 @@ namespace RollOfTheScout
         /// <summary>特级厨师·自带厨具（开局）：每帧幂等补发，直到成功（_initialApplied 记账 + 失败重试）。</summary>
         private void EnsureMasterChefStove(List<Character> characters)
         {
+            if (!_ledger.HasClassInRoom(ClassType.MasterChef)) return;
+
             int count = Mathf.Max(0, ModConfig.MasterChef.InitialStoveCount.Value);
             if (count == 0) return;
 
@@ -3931,6 +4031,8 @@ namespace RollOfTheScout
         /// <summary>炊事员·后勤保障（每层）：每次进入新关卡获得配置数量的便携烤炉（每帧幂等补发）。</summary>
         private void GrantCookStoves(List<Character> characters)
         {
+            if (!_ledger.HasClassInRoom(ClassType.Cook)) return;
+
             int want = Mathf.Max(0, ModConfig.Cook.InitialStoveCount.Value);
             if (want == 0) return;
 
@@ -4010,10 +4112,12 @@ namespace RollOfTheScout
         /// 炊事员·后勤保障：随机取一个「食物」预制体名。
         /// 优先从配置「后勤保障-食物池」中抽取；池为空或全部无效时，
         /// 退化为「数据库中所有带 <c>Action_RestoreHunger</c> 的物品」（与普通食物判定同一口径）。
+        ///
+        /// 配置池按字符串缓存（<see cref="CookFoodPool"/>），避免每次调用都 <c>ParseList</c>（字符串分配）。
         /// </summary>
-        private static string PickRandomFood()
+        private string PickRandomFood()
         {
-            var pool = WeightedPicker.ParseList(ModConfig.Cook.FoodPool.Value);
+            var pool = CookFoodPool();
             var candidates = new List<string>();
             foreach (var name in pool)
             {
@@ -4330,15 +4434,102 @@ namespace RollOfTheScout
         }
 
         /// <summary>
-        /// 生成一件临时物品并喂给目标角色（由目标客户端自行「使用」），1 秒后销毁。
-        /// 与 <see cref="GrantSprint"/> 同理，仅适用于「使用即生效」的即时物品（如奶白金）。
+        /// 让目标角色「使用」一件临时物品（生成在场景外、玩家看不到 → FeedItem → 延迟销毁）。
+        /// 见 <see cref="EnqueueTransientFeed"/>：实际生成被摊到后续若干帧执行，以避免群体效果同帧爆发实例化。
         /// </summary>
         private void FeedTransientItem(Character character, string prefabName, string reason)
         {
+            EnqueueTransientFeed(character, prefabName, reason, TransientKind.Generic);
+        }
+
+        // ---------------------------------------------------------------
+        // 「临时物品喂食」的摊帧执行（性能优化）
+        //
+        // 背景：加速 / 无限体力 / 无敌 / 潘多拉魔盒等效果，都靠「主机生成一件临时物品喂给目标、
+        // 让**目标自己的客户端**去消费它」来实现。每次生成都是一次 `PhotonNetwork.Instantiate`（网络对象），
+        // **所有客户端都要实例化 + 稍后销毁**。而群体效果（领袖号召 / 旗手执旗 / 亡灵光环无敌 /
+        // 好多区 / 教诲 / 童军的力量 …）会在**同一次结算里对多名玩家各来一次** →
+        // 10 人局可能**同一帧内爆发 10~30 次实例化**，10 个客户端同时处理，直接造成单帧尖峰与掉帧。
+        //
+        // 做法：把这类「临时物品喂食」放进一个队列，**每帧最多执行 TransientFeedsPerFrame 次**，
+        // 其余顺延到后续帧。内容与结果完全不变，只是把一次爆发摊成几帧；
+        // 取 3 次/帧（60fps ≈ 180 次/秒的吞吐）时，30 次的爆发最迟约 0.17 秒发完，实际不可感知。
+        // ---------------------------------------------------------------
+
+        /// <summary>「临时物品喂食」的类别（仅用于区分配套记账与日志措辞）。</summary>
+        private enum TransientKind
+        {
+            /// <summary>通用喂食（<see cref="FeedTransientItem"/>）。</summary>
+            Generic,
+            /// <summary>加速（能量饮料，喂食后登记「加速结束清困倦」监听）。</summary>
+            Sprint,
+            /// <summary>无限体力（大棒棒糖，喂食后登记「后续持续困倦」监听）。</summary>
+            InfiniteStamina,
+            /// <summary>潘多拉魔盒。</summary>
+            PandoraBox,
+        }
+
+        /// <summary>一次排队的「临时物品喂食」请求。</summary>
+        private sealed class TransientFeed
+        {
+            public Character Target;
+            public string Prefab;
+            public string Reason;
+            public TransientKind Kind;
+            /// <summary>加速类：加速结束后要清除的困倦量（&lt;= 0 表示不登记监听）。</summary>
+            public float SprintClearAmount;
+        }
+
+        private readonly Queue<TransientFeed> _transientFeeds = new Queue<TransientFeed>();
+
+        /// <summary>每帧最多执行的「临时物品实例化」次数（摊帧粒度）。</summary>
+        private const int TransientFeedsPerFrame = 3;
+
+        /// <summary>队列上限：异常情况下防止无限堆积（正常一次爆发远小于该值）。</summary>
+        private const int TransientFeedQueueCap = 64;
+
+        /// <summary>把一次「临时物品喂食」排入队列，由 <see cref="DrainTransientFeeds"/> 逐帧摊开执行。</summary>
+        private void EnqueueTransientFeed(Character character, string prefabName, string reason,
+            TransientKind kind, float sprintClearAmount = -1f)
+        {
+            if (character == null || string.IsNullOrEmpty(prefabName)) return;
+            if (_transientFeeds.Count >= TransientFeedQueueCap) return;   // 上限保护（正常不会命中）
+
+            _transientFeeds.Enqueue(new TransientFeed
+            {
+                Target = character,
+                Prefab = prefabName,
+                Reason = reason,
+                Kind = kind,
+                SprintClearAmount = sprintClearAmount,
+            });
+        }
+
+        /// <summary>每帧调用：摊开执行队列中最前面的若干次「临时物品喂食」（见上面的性能说明）。</summary>
+        private void DrainTransientFeeds()
+        {
+            for (int i = 0; i < TransientFeedsPerFrame && _transientFeeds.Count > 0; i++)
+            {
+                ExecuteTransientFeed(_transientFeeds.Dequeue());
+            }
+        }
+
+        /// <summary>真正执行一次「临时物品喂食」：生成 → FeedItem → 延迟销毁，并做对应的配套记账与日志。</summary>
+        private void ExecuteTransientFeed(TransientFeed req)
+        {
+            var character = req.Target;
+            if (character == null) return;   // 目标已离开 / 已销毁：与原实现「对空对象直接返回」一致
+
+            string prefabName = req.Prefab;
+            string reason = req.Reason;
+
             var go = HostApi.SpawnTransientItem(prefabName);
             if (go == null)
             {
-                Plugin.Log.LogWarning($"[RollOfTheScout] {reason}：生成 {prefabName} 失败，{Nick(character)} 未获得该效果。");
+                Plugin.Log.LogWarning(req.Kind == TransientKind.PandoraBox
+                    ? $"[RollOfTheScout] 潘多拉：生成潘多拉魔盒失败，{Nick(character)} 未受影响。"
+                    : $"[RollOfTheScout] {reason}：生成 {prefabName} 失败，{Nick(character)} 未获得"
+                      + (req.Kind == TransientKind.Sprint ? "加速。" : req.Kind == TransientKind.InfiniteStamina ? "无限体力。" : "该效果。"));
                 return;
             }
 
@@ -4351,7 +4542,37 @@ namespace RollOfTheScout
 
             character.FeedItem(item);
             StartCoroutine(DestroyAfter(go, 1f));
-            Plugin.Log.LogInfo($"[RollOfTheScout] {reason}：{Nick(character)} 获得 {prefabName}。");
+
+            // 配套记账：加速 → 登记「加速结束清困倦」；无限体力 → 登记「后续持续困倦」监听
+            if (req.Kind == TransientKind.Sprint && req.SprintClearAmount > 0f)
+            {
+                RegisterEffectWatch(character, reason, Affliction.AfflictionType.FasterBoi, "加速", req.SprintClearAmount);
+            }
+            else if (req.Kind == TransientKind.InfiniteStamina
+                     && ModConfig.StandardBearer.StaminaDrowsyClearAmount.Value > 0f)
+            {
+                var id = _ledger.IdOf(character);
+                if (!string.IsNullOrEmpty(id))
+                {
+                    _staminaDrowsyWatches[id] = new StaminaDrowsyWatch { Character = character, Reason = reason };
+                }
+            }
+
+            switch (req.Kind)
+            {
+                case TransientKind.Sprint:
+                    Plugin.Log.LogInfo($"[RollOfTheScout] {reason}：{Nick(character)} 获得加速（能量饮料）。");
+                    break;
+                case TransientKind.InfiniteStamina:
+                    Plugin.Log.LogInfo($"[RollOfTheScout] {reason}：{Nick(character)} 获得无限体力（{prefabName}）。");
+                    break;
+                case TransientKind.PandoraBox:
+                    Plugin.Log.LogInfo($"[RollOfTheScout] 潘多拉：{Nick(character)} 被施加潘多拉魔盒。");
+                    break;
+                default:
+                    Plugin.Log.LogInfo($"[RollOfTheScout] {reason}：{Nick(character)} 获得 {prefabName}。");
+                    break;
+            }
         }
 
         // ---------------------------------------------------------------
@@ -6232,30 +6453,9 @@ namespace RollOfTheScout
         private void GrantSprint(Character character, string reason, bool clearDrowsyAfter = false, float clearAmount = -1f)
         {
             float amount = clearAmount >= 0f ? clearAmount : ModConfig.Explorer.DrowsyClearAmount.Value;
-            var go = HostApi.SpawnTransientItem(ItemNames.EnergyDrink);
-            if (go == null)
-            {
-                Plugin.Log.LogWarning($"[RollOfTheScout] {reason}：生成能量饮料失败，{Nick(character)} 未获得加速。");
-                return;
-            }
-
-            var item = go.GetComponent<Item>();
-            if (item == null)
-            {
-                PhotonNetwork.Destroy(go);
-                return;
-            }
-
-            character.FeedItem(item);
-            StartCoroutine(DestroyAfter(go, 1f));
-
-            // 登记一次加速周期：观察到加速结束后清除困倦（同一玩家再次加速时从头计时）
-            if (clearDrowsyAfter && amount > 0f)
-            {
-                RegisterEffectWatch(character, reason, Affliction.AfflictionType.FasterBoi, "加速", amount);
-            }
-
-            Plugin.Log.LogInfo($"[RollOfTheScout] {reason}：{Nick(character)} 获得加速（能量饮料）。");
+            // 摊帧执行：入队后由 DrainTransientFeeds 逐帧生成（避免群体效果同帧爆发实例化）
+            EnqueueTransientFeed(character, ItemNames.EnergyDrink, reason, TransientKind.Sprint,
+                clearDrowsyAfter ? amount : -1f);
         }
 
         /// <summary>
@@ -6268,40 +6468,8 @@ namespace RollOfTheScout
         /// </summary>
         private void GrantInfiniteStamina(Character character, string reason)
         {
-            const string prefabName = ItemNames.Lollipop;
-
-            var go = HostApi.SpawnTransientItem(prefabName);
-            if (go == null)
-            {
-                Plugin.Log.LogWarning($"[RollOfTheScout] {reason}：生成 {prefabName} 失败，{Nick(character)} 未获得无限体力。");
-                return;
-            }
-
-            var item = go.GetComponent<Item>();
-            if (item == null)
-            {
-                PhotonNetwork.Destroy(go);
-                return;
-            }
-
-            character.FeedItem(item);
-            StartCoroutine(DestroyAfter(go, 1f));
-
-            // 登记无限体力周期：观察其后「持续叠加困倦」结束，再清除残留困倦（同一玩家再次无限体力时从头计时）
-            if (ModConfig.StandardBearer.StaminaDrowsyClearAmount.Value > 0f)
-            {
-                var id = _ledger.IdOf(character);
-                if (!string.IsNullOrEmpty(id))
-                {
-                    _staminaDrowsyWatches[id] = new StaminaDrowsyWatch
-                    {
-                        Character = character,
-                        Reason = reason,
-                    };
-                }
-            }
-
-            Plugin.Log.LogInfo($"[RollOfTheScout] {reason}：{Nick(character)} 获得无限体力（{prefabName}）。");
+            // 摊帧执行：入队后由 DrainTransientFeeds 逐帧生成（避免群体效果同帧爆发实例化）
+            EnqueueTransientFeed(character, ItemNames.Lollipop, reason, TransientKind.InfiniteStamina);
         }
 
         /// <summary>登记一次「临时效果周期」，用于在效果结束后清除其残留的困倦。</summary>
@@ -6536,12 +6704,17 @@ namespace RollOfTheScout
             float dt = Time.deltaTime;
 
             // ---- 先驱·不屈：昏迷时立即清除全部负面状态（每局每人仅一次）----
-            foreach (var explorer in characters)
+            // 该效果依赖「昏迷瞬间」判定，故必须每帧采样（不能改成按间隔检测）；
+            // 但没有先驱在场时可直接跳过整轮遍历。
+            if (_ledger.HasClassInRoom(ClassType.Explorer))
             {
-                if (_ledger.GetClass(explorer) != ClassType.Explorer) continue;
-                string explorerId = _ledger.IdOf(explorer);
-                if (string.IsNullOrEmpty(explorerId)) continue;
-                TryUnbroken(explorer, explorerId);
+                foreach (var explorer in characters)
+                {
+                    if (_ledger.GetClass(explorer) != ClassType.Explorer) continue;
+                    string explorerId = _ledger.IdOf(explorer);
+                    if (string.IsNullOrEmpty(explorerId)) continue;
+                    TryUnbroken(explorer, explorerId);
+                }
             }
 
             // ---- 先驱·高代谢：定时注入饥饿（覆盖游戏默认的自然增长）----
@@ -6551,7 +6724,8 @@ namespace RollOfTheScout
             {
                 _explorerHungerTimer = 0f;
                 float hunger = ModConfig.Explorer.HungerPerTick.Value;
-                if (hunger > 0f)
+                // 无先驱在场 → 跳过对全体玩家的遍历（计时器照常重置，效果时序不变）
+                if (hunger > 0f && _ledger.HasClassInRoom(ClassType.Explorer))
                 {
                     foreach (var explorer in characters)
                     {
@@ -6568,11 +6742,15 @@ namespace RollOfTheScout
             if (_explorerSprintTimer >= sprintInterval)
             {
                 _explorerSprintTimer = 0f;
-                foreach (var explorer in characters)
+                // 无先驱在场 → 跳过对全体玩家的遍历（计时器照常重置，效果时序不变）
+                if (_ledger.HasClassInRoom(ClassType.Explorer))
                 {
-                    if (_ledger.GetClass(explorer) != ClassType.Explorer) continue;
-                    if (IsDead(explorer)) continue;
-                    GrantSprint(explorer, "高代谢", clearDrowsyAfter: true);
+                    foreach (var explorer in characters)
+                    {
+                        if (_ledger.GetClass(explorer) != ClassType.Explorer) continue;
+                        if (IsDead(explorer)) continue;
+                        GrantSprint(explorer, "高代谢", clearDrowsyAfter: true);
+                    }
                 }
             }
 
@@ -6582,10 +6760,14 @@ namespace RollOfTheScout
             if (_inspireTimer >= inspireInterval)
             {
                 _inspireTimer = 0f;
-                foreach (var leader in characters)
+                // 无领袖在场 → 跳过对全体玩家的遍历（号召会对半径内每人生成一次加速物品，跳过收益更高）
+                if (_ledger.HasClassInRoom(ClassType.Leader))
                 {
-                    if (_ledger.GetClass(leader) != ClassType.Leader) continue;
-                    DoInspire(leader);
+                    foreach (var leader in characters)
+                    {
+                        if (_ledger.GetClass(leader) != ClassType.Leader) continue;
+                        DoInspire(leader);
+                    }
                 }
             }
 
@@ -6621,10 +6803,14 @@ namespace RollOfTheScout
             if (_poisonTimer >= poisonInterval)
             {
                 _poisonTimer = 0f;
-                foreach (var doctor in characters)
+                // 无医生在场 → 跳过对全体玩家的遍历
+                if (_ledger.HasClassInRoom(ClassType.Doctor))
                 {
-                    if (_ledger.GetClass(doctor) != ClassType.Doctor) continue;
-                    DoPoisonReduce(doctor);
+                    foreach (var doctor in characters)
+                    {
+                        if (_ledger.GetClass(doctor) != ClassType.Doctor) continue;
+                        DoPoisonReduce(doctor);
+                    }
                 }
             }
 
@@ -6634,10 +6820,14 @@ namespace RollOfTheScout
             if (_nursingTimer >= nursingInterval)
             {
                 _nursingTimer = 0f;
-                foreach (var doctor in characters)
+                // 无医生在场 → 跳过对全体玩家的遍历
+                if (_ledger.HasClassInRoom(ClassType.Doctor))
                 {
-                    if (_ledger.GetClass(doctor) != ClassType.Doctor) continue;
-                    DoNursing(doctor);
+                    foreach (var doctor in characters)
+                    {
+                        if (_ledger.GetClass(doctor) != ClassType.Doctor) continue;
+                        DoNursing(doctor);
+                    }
                 }
             }
 
@@ -6647,11 +6837,15 @@ namespace RollOfTheScout
             if (_pandoraTimer >= pandoraInterval)
             {
                 _pandoraTimer = 0f;
-                foreach (var pandora in characters)
+                // 无潘多拉之子在场 → 跳过对全体玩家的遍历（该效果每次命中都会生成世界物品，跳过收益更高）
+                if (_ledger.HasClassInRoom(ClassType.Pandora))
                 {
-                    if (_ledger.GetClass(pandora) != ClassType.Pandora) continue;
-                    if (IsDead(pandora)) continue;
-                    DoPandora(pandora);
+                    foreach (var pandora in characters)
+                    {
+                        if (_ledger.GetClass(pandora) != ClassType.Pandora) continue;
+                        if (IsDead(pandora)) continue;
+                        DoPandora(pandora);
+                    }
                 }
             }
 
@@ -6738,11 +6932,15 @@ namespace RollOfTheScout
             else if (_necAuraTimer >= necAuraInterval)
             {
                 _necAuraTimer = 0f;
-                foreach (var necro in characters)
+                // 无死灵法师在场 → 跳过对全体玩家的遍历（光环每次会对半径内玩家逐一下发状态）
+                if (_ledger.HasClassInRoom(ClassType.Necromancer))
                 {
-                    if (_ledger.GetClass(necro) != ClassType.Necromancer) continue;
-                    if (IsDead(necro)) continue;
-                    DoNecromancerAura(necro);
+                    foreach (var necro in characters)
+                    {
+                        if (_ledger.GetClass(necro) != ClassType.Necromancer) continue;
+                        if (IsDead(necro)) continue;
+                        DoNecromancerAura(necro);
+                    }
                 }
             }
 
@@ -6756,11 +6954,15 @@ namespace RollOfTheScout
             else if (_necAuraInvincibleTimer >= necAuraInvincibleInterval)
             {
                 _necAuraInvincibleTimer = 0f;
-                foreach (var necro in characters)
+                // 无死灵法师在场 → 跳过对全体玩家的遍历（无敌效果每人都会生成一次世界物品，跳过收益更高）
+                if (_ledger.HasClassInRoom(ClassType.Necromancer))
                 {
-                    if (_ledger.GetClass(necro) != ClassType.Necromancer) continue;
-                    if (IsDead(necro)) continue;
-                    GrantNecromancerAuraInvincibility(necro);
+                    foreach (var necro in characters)
+                    {
+                        if (_ledger.GetClass(necro) != ClassType.Necromancer) continue;
+                        if (IsDead(necro)) continue;
+                        GrantNecromancerAuraInvincibility(necro);
+                    }
                 }
             }
 
@@ -6797,7 +6999,9 @@ namespace RollOfTheScout
                 _savageBananaTimer = 0f;
                 int bananaCount = Mathf.Max(0, ModConfig.Savage.BananaCount.Value);
                 string bananaItem = ModConfig.Savage.BananaItem.Value;
-                if (bananaCount > 0 && !string.IsNullOrEmpty(bananaItem))
+                // 无野人在场 → 跳过对全体玩家的遍历（每人都会发放一次物品）
+                if (bananaCount > 0 && !string.IsNullOrEmpty(bananaItem)
+                    && _ledger.HasClassInRoom(ClassType.Savage))
                 {
                     foreach (var savage in characters)
                     {
@@ -6881,11 +7085,15 @@ namespace RollOfTheScout
             if (frenzyInterval > 0f && _dancerDanceTimer >= frenzyInterval)
             {
                 _dancerDanceTimer = 0f;
-                foreach (var dancer in characters)
+                // 无舞王在场 → 跳过对全体玩家的遍历（狂热舞者每人都会广播一条表情 RPC，跳过收益更高）
+                if (_ledger.HasClassInRoom(ClassType.Dancer))
                 {
-                    if (_ledger.GetClass(dancer) != ClassType.Dancer) continue;
-                    if (IsDead(dancer)) continue;
-                    ForceBackflip(dancer, "狂热舞者");
+                    foreach (var dancer in characters)
+                    {
+                        if (_ledger.GetClass(dancer) != ClassType.Dancer) continue;
+                        if (IsDead(dancer)) continue;
+                        ForceBackflip(dancer, "狂热舞者");
+                    }
                 }
             }
 
@@ -6916,11 +7124,15 @@ namespace RollOfTheScout
             if (slipInterval > 0f && _daihaoSliplTimer >= slipInterval)
             {
                 _daihaoSliplTimer = 0f;
-                foreach (var c in characters)
+                // 无待皓在场 → 跳过对全体玩家的遍历（脚滑每人都会广播一条表情 RPC）
+                if (_ledger.HasClassInRoom(ClassType.Daihao))
                 {
-                    if (_ledger.GetClass(c) != ClassType.Daihao) continue;
-                    if (IsDead(c)) continue;
-                    ForceBackflip(c, "脚滑");
+                    foreach (var c in characters)
+                    {
+                        if (_ledger.GetClass(c) != ClassType.Daihao) continue;
+                        if (IsDead(c)) continue;
+                        ForceBackflip(c, "脚滑");
+                    }
                 }
             }
 
@@ -6931,7 +7143,8 @@ namespace RollOfTheScout
             {
                 _daihaoEggTimer = 0f;
                 string eggItem = ModConfig.Daihao.ProductionItem.Value;
-                if (!string.IsNullOrEmpty(eggItem))
+                // 无待皓在场 → 跳过对全体玩家的遍历（每人都会发放一次物品）
+                if (!string.IsNullOrEmpty(eggItem) && _ledger.HasClassInRoom(ClassType.Daihao))
                 {
                     foreach (var c in characters)
                     {
@@ -6972,7 +7185,8 @@ namespace RollOfTheScout
                 _daihaoAllSameTimer = 0f;
                 float allSameReduce = ModConfig.Daihao.AllSameInjuryReduce.Value;
                 float allSameRadius = ModConfig.Daihao.AllSameRadius.Value;
-                if (allSameReduce > 0f && allSameRadius > 0f)
+                // 无待皓在场 → 跳过对全体玩家的遍历（每人都要做一次半径扫描）
+                if (allSameReduce > 0f && allSameRadius > 0f && _ledger.HasClassInRoom(ClassType.Daihao))
                 {
                     foreach (var c in characters)
                     {
@@ -6995,11 +7209,15 @@ namespace RollOfTheScout
             if (_saintTeachTimer >= teachInterval)
             {
                 _saintTeachTimer = 0f;
-                foreach (var saint in characters)
+                // 无圣人在场 → 跳过对全体玩家的遍历（教诲每次会对半径内玩家逐一下发状态，跳过收益更高）
+                if (_ledger.HasClassInRoom(ClassType.Saint))
                 {
-                    if (_ledger.GetClass(saint) != ClassType.Saint) continue;
-                    if (IsDead(saint)) continue;
-                    DoSaintTeach(saint);
+                    foreach (var saint in characters)
+                    {
+                        if (_ledger.GetClass(saint) != ClassType.Saint) continue;
+                        if (IsDead(saint)) continue;
+                        DoSaintTeach(saint);
+                    }
                 }
             }
 
@@ -7117,7 +7335,8 @@ namespace RollOfTheScout
                 float stressDrowsy = ModConfig.Cook.StressDrowsyPerTick.Value;
                 float stressRadius = ModConfig.Cook.StressRadius.Value;
                 float stressThreshold = ModConfig.Cook.StressHungerThreshold.Value;
-                if (stressDrowsy > 0f)
+                // 无炊事员在场 → 跳过对全体玩家的遍历（每人都可能触发半径扫描）
+                if (stressDrowsy > 0f && _ledger.HasClassInRoom(ClassType.Cook))
                 {
                     foreach (var cook in characters)
                     {
@@ -7174,17 +7393,20 @@ namespace RollOfTheScout
                 _hamsterExtraTimer = 0f;
                 float threshold = ModConfig.Hamster.WeightThreshold.Value;
                 float extra = ModConfig.Hamster.ExtraStamina.Value;
-                foreach (var hamster in characters)
+                // 无仓鼠在场 → 跳过对全体玩家的遍历（每人达标时都会生成一次加速物品）
+                if (extra != 0f && _ledger.HasClassInRoom(ClassType.Hamster))
                 {
-                    if (_ledger.GetClass(hamster) != ClassType.Hamster) continue;
-                    if (IsDead(hamster)) continue;
-                    if (extra == 0f) continue;
+                    foreach (var hamster in characters)
+                    {
+                        if (_ledger.GetClass(hamster) != ClassType.Hamster) continue;
+                        if (IsDead(hamster)) continue;
 
-                    float weight = HostApi.GetStatus(hamster, CharacterAfflictions.STATUSTYPE.Weight);
-                    if (weight + 0.0125f < threshold) continue;
+                        float weight = HostApi.GetStatus(hamster, CharacterAfflictions.STATUSTYPE.Weight);
+                        if (weight + 0.0125f < threshold) continue;
 
-                    HostApi.BoostExtraStamina(hamster, extra);
-                    Plugin.Log.LogInfo($"[RollOfTheScout] 我全都要：{Nick(hamster)} 负重 {weight * 100f:0.#} ≥ {threshold * 100f:0.#}，额外体力+{extra * 100f:0.#}。");
+                        HostApi.BoostExtraStamina(hamster, extra);
+                        Plugin.Log.LogInfo($"[RollOfTheScout] 我全都要：{Nick(hamster)} 负重 {weight * 100f:0.#} ≥ {threshold * 100f:0.#}，额外体力+{extra * 100f:0.#}。");
+                    }
                 }
             }
 
@@ -7194,11 +7416,15 @@ namespace RollOfTheScout
             if (warmInterval > 0f && _firefighterHealTimer >= warmInterval)
             {
                 _firefighterHealTimer = 0f;
-                foreach (var firefighter in characters)
+                // 无救火队员在场 → 跳过对全体玩家的遍历（每人触发时都会做一次半径扫描）
+                if (_ledger.HasClassInRoom(ClassType.Firefighter))
                 {
-                    if (_ledger.GetClass(firefighter) != ClassType.Firefighter) continue;
-                    if (IsDead(firefighter)) continue;
-                    DoFirefighterWarmShoulder(firefighter);
+                    foreach (var firefighter in characters)
+                    {
+                        if (_ledger.GetClass(firefighter) != ClassType.Firefighter) continue;
+                        if (IsDead(firefighter)) continue;
+                        DoFirefighterWarmShoulder(firefighter);
+                    }
                 }
             }
 
@@ -8080,6 +8306,11 @@ namespace RollOfTheScout
         {
             if (!MilesRuleZeroUnlocked()) return;
 
+            // 与救火队员·火线救援同理：昏迷跳变按 DownedPollInterval 采样，不再每帧遍历全体玩家。
+            _milesRuleZeroPollTimer += Time.deltaTime;
+            if (_milesRuleZeroPollTimer < DownedPollInterval) return;
+            _milesRuleZeroPollTimer = 0f;
+
             List<Character> justDowned = null;
             foreach (var c in characters)
             {
@@ -8091,9 +8322,14 @@ namespace RollOfTheScout
                 bool downed = IsDowned(c);
                 if (_milesWasDowned.TryGetValue(id, out bool was))
                 {
+                    if (was == downed) continue;   // 状态未变：不必写回字典
+                    _milesWasDowned[id] = downed;
                     if (!was && downed) (justDowned ??= new List<Character>()).Add(c);
                 }
-                _milesWasDowned[id] = downed;
+                else
+                {
+                    _milesWasDowned[id] = downed;  // 首次登记：本帧不触发
+                }
             }
             if (justDowned == null) return;
 
@@ -8365,6 +8601,10 @@ namespace RollOfTheScout
         private void ApplyDaihaoAvatar(List<Character> characters)
         {
             if (!PhotonNetwork.IsMasterClient) return;
+
+            // 既没有待皓玩家、也没有「曾套用待皓装扮待还原」的记录 → 无事可做：
+            // 直接返回，省掉每帧的服务查找与对全体玩家的遍历。
+            if (!_ledger.HasClassInRoom(ClassType.Daihao) && _avatarOriginals.Count == 0) return;
 
             var service = GameHandler.GetService<PersistentPlayerDataService>();
             if (service == null) return;
@@ -8746,24 +8986,8 @@ namespace RollOfTheScout
         /// </summary>
         private void GrantPandoraBox(Character character)
         {
-            var go = HostApi.SpawnTransientItem(ItemNames.PandorasBox);
-            if (go == null)
-            {
-                Plugin.Log.LogWarning($"[RollOfTheScout] 潘多拉：生成潘多拉魔盒失败，{Nick(character)} 未受影响。");
-                return;
-            }
-
-            var item = go.GetComponent<Item>();
-            if (item == null)
-            {
-                PhotonNetwork.Destroy(go);
-                return;
-            }
-
-            character.FeedItem(item);
-            StartCoroutine(DestroyAfter(go, 1f));
-
-            Plugin.Log.LogInfo($"[RollOfTheScout] 潘多拉：{Nick(character)} 被施加潘多拉魔盒。");
+            // 摊帧执行：入队后由 DrainTransientFeeds 逐帧生成（潘多拉对半径内多名玩家逐一施加，属同帧爆发源）
+            EnqueueTransientFeed(character, ItemNames.PandorasBox, "潘多拉", TransientKind.PandoraBox);
         }
 
         private void DoInspire(Character leader)
@@ -9976,6 +10200,8 @@ namespace RollOfTheScout
         /// </summary>
         private void EnsureAstronautBalloons(List<Character> characters)
         {
+            if (!_ledger.HasClassInRoom(ClassType.Astronaut)) return;
+
             int initial = Mathf.Max(0, ModConfig.Astronaut.FloatInitialBalloons.Value);
             if (initial == 0) return;
 

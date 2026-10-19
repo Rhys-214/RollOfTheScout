@@ -33,6 +33,17 @@ namespace RollOfTheScout
         /// </summary>
         private readonly Dictionary<PhotonView, ClassType> _classByView = new Dictionary<PhotonView, ClassType>();
 
+        /// <summary>
+        /// 职业 → 当前账本中该职业的人数（O(1) 索引）。
+        ///
+        /// 用途：<see cref="HasClassInRoom"/> 是每帧被调用多次的「职业是否在场」判定 ——
+        /// 各每帧驱动函数（Ensure* / Grant* / Tick*）都先用它做**提前返回**，
+        /// 从而在某个职业不在场时**完全跳过对全体玩家的遍历**。
+        /// 若靠遍历 <see cref="_byId"/> 实现（旧做法），该判定本身就成了 O(玩家数) 的扫描，
+        /// 人数越多越贵，反而抵消了提前返回的收益。这里改为随写入同步维护计数，使判定恒为 O(1)。
+        /// </summary>
+        private readonly Dictionary<ClassType, int> _countByType = new Dictionary<ClassType, int>();
+
         public int Count => _byId.Count;
 
         public void Clear()
@@ -41,6 +52,27 @@ namespace RollOfTheScout
             _idByView.Clear();
             _classByView.Clear();
             _claimById.Clear();
+            _countByType.Clear();
+        }
+
+        /// <summary>记账：把某个「稳定标识 → 职业」写入账本并同步维护职业人数索引。</summary>
+        private void SetEntry(string id, ClassType type)
+        {
+            if (_byId.TryGetValue(id, out var old) && old == type) return;
+            if (_byId.TryGetValue(id, out var prev) && prev != ClassType.None)
+                _countByType[prev] = Mathf.Max(0, (_countByType.TryGetValue(prev, out int pc) ? pc : 0) - 1);
+
+            _byId[id] = type;
+            if (type != ClassType.None)
+                _countByType[type] = (_countByType.TryGetValue(type, out int nc) ? nc : 0) + 1;
+
+            _classByView.Clear();   // 职业已改写：让 GetClass 缓存整体失效，下次按新值重算
+        }
+
+        /// <summary>账本中当前是否存在该职业的玩家（O(1)，语义与旧的遍历判定完全一致）。</summary>
+        public bool HasClassInRoom(ClassType type)
+        {
+            return _countByType.TryGetValue(type, out int n) && n > 0;
         }
 
         public bool TryGet(string id, out ClassType type)
@@ -131,15 +163,6 @@ namespace RollOfTheScout
             var type = TryGet(IdOf(character), out var t) ? t : ClassType.None;
             _classByView[view] = type;
             return type;
-        }
-
-        public bool HasClassInRoom(ClassType type)
-        {
-            foreach (var kv in _byId)
-            {
-                if (kv.Value == type) return true;
-            }
-            return false;
         }
 
         // ---------------------------------------------------------------
@@ -363,8 +386,7 @@ namespace RollOfTheScout
                 return ClassType.None;
             }
 
-            _byId[id] = picked;
-            _classByView.Clear();   // 职业已改写：让 GetClass 缓存整体失效，下次按新值重算
+            SetEntry(id, picked);
             Plugin.Log.LogInfo($"[ClassLedger] 分配职业：{Nick(character)} → {Describe(picked)}");
             return picked;
         }
@@ -396,8 +418,7 @@ namespace RollOfTheScout
             newType = WeightedPick(pool);
             if (newType == ClassType.None) return false;
 
-            _byId[id] = newType;
-            _classByView.Clear();   // 转职：缓存整体失效
+            SetEntry(id, newType);
             return true;
         }
 
@@ -414,8 +435,7 @@ namespace RollOfTheScout
             if (string.IsNullOrEmpty(id)) return false;
             if (_byId.TryGetValue(id, out var current) && current == type) return false;
 
-            _byId[id] = type;
-            _classByView.Clear();   // 强制改职：缓存整体失效
+            SetEntry(id, type);
             return true;
         }
 
@@ -475,14 +495,10 @@ namespace RollOfTheScout
             return !ModConfig.MilesSoul.BeachOnly.Value || !HostClassManager.MilesPastBeach();
         }
 
+        /// <summary>该职业当前人数（O(1)，读自 <c>_countByType</c> 索引）。</summary>
         private int CountOf(ClassType type)
         {
-            int n = 0;
-            foreach (var kv in _byId)
-            {
-                if (kv.Value == type) n++;
-            }
-            return n;
+            return _countByType.TryGetValue(type, out int n) ? n : 0;
         }
 
         private static bool IsCapped(ClassType type, int current)
