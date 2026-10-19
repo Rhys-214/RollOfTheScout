@@ -78,7 +78,7 @@ Output: `Mod/RollOfTheScout/bin/Release/com.peakmodding.RollOfTheScout.dll`.
 
 ### Known constraints
 
-- Class effects are driven entirely by the host; a client without any mod sees no class **text** information (the effects still apply).
+- Class effects are driven entirely by the host; a client without any mod sees no class text information (the effects still apply).
 - Some effects can only be approximated because of engine limits (e.g. passive multipliers use "poll + compensating delta").
 - Class display is per-client local UI; there is no way to push arbitrary text into an unmodded client's screen.
 
@@ -95,20 +95,20 @@ Licensed under the **[GNU General Public License v3.0 (GPLv3)](LICENSE)**.
 - [BepInEx](https://github.com/BepInEx/BepInEx) and [HarmonyX](https://github.com/BepInEx/HarmonyX).
 - This mod was made with **Deepseek V4.1 Flash**.
 - Special thanks to the PEAK community friends for their great support of me and this mod:
-    • 待皓（🐔待待子的无尽巧思🌟）
-    • 熊猫狗旗帜
-    • 晨曦
-    • ATTacv
-    • liu
-    • 黑松露味薯片
-    • 兰斯
-    • pencil_book
-    • 晓轩CCA
-    • 铃铃猫
-    • 伟约·恶和
-    • 落羽之月所言
-    • 星辰幻玥
-    • 御坂御坂
+    - 待皓（🐔待待子的无尽巧思🌟）
+    - 熊猫狗旗帜
+    - 晨曦
+    - ATTacv
+    - liu
+    - 黑松露味薯片
+    - 兰斯
+    - pencil_book
+    - 晓轩CCA
+    - 铃铃猫
+    - 伟约·恶和
+    - 落羽之月所言
+    - 星辰幻玥
+    - 御坂御坂
 
 ### Disclaimer
 
@@ -196,7 +196,7 @@ dotnet build Mod/RollOfTheScout/RollOfTheScout.csproj -c Release
 
 ### 已知约束
 
-- 职业效果全部由主机驱动；**未装任何模组的客机看不到职业文字信息**（效果依旧生效）。
+- 职业效果全部由主机驱动；未装任何模组的客机看不到职业文字信息（效果依旧生效）。
 - 部分效果受引擎限制只能近似实现（如被动倍率类采用「轮询 + 补偿增量」）。
 - 职业显示属于各客户端本地 UI；原版没有「把任意文本送到未装模组客机屏幕」的通道。
 
@@ -213,20 +213,20 @@ dotnet build Mod/RollOfTheScout/RollOfTheScout.csproj -c Release
 - [BepInEx](https://github.com/BepInEx/BepInEx) 与 [HarmonyX](https://github.com/BepInEx/HarmonyX)。
 - 本模组使用 **Deepseek V4.1 Flash** 制作。
 - 特别感谢各位PEAK同好群群友对我与本模组的大力支持：
-    • 待皓（🐔待待子的无尽巧思🌟）
-    • 熊猫狗旗帜
-    • 晨曦
-    • ATTacv
-    • liu
-    • 黑松露味薯片
-    • 兰斯
-    • pencil_book
-    • 晓轩CCA
-    • 铃铃猫
-    • 伟约·恶和
-    • 落羽之月所言
-    • 星辰幻玥
-    • 御坂御坂
+    - 待皓（🐔待待子的无尽巧思🌟）
+    - 熊猫狗旗帜
+    - 晨曦
+    - ATTacv
+    - liu
+    - 黑松露味薯片
+    - 兰斯
+    - pencil_book
+    - 晓轩CCA
+    - 铃铃猫
+    - 伟约·恶和
+    - 落羽之月所言
+    - 星辰幻玥
+    - 御坂御坂
 
 ### 免责声明
 
@@ -234,5 +234,5 @@ dotnet build Mod/RollOfTheScout/RollOfTheScout.csproj -c Release
 
 ### 一些作者的话
 
-作者通用联系方式：邮箱 **2043581350@qq.com**（当然，你也可以直接加QQ反馈意见与建议）
-欢迎加入PEAK同好群喵（**QQ群：814891614**，模组更新将优先在本群内测）~
+- 作者通用联系方式：邮箱 **2043581350@qq.com**（当然，你也可以直接加QQ反馈意见与建议）
+- 欢迎加入PEAK同好群喵（**QQ群：814891614**，模组更新将优先在本群内测）~
