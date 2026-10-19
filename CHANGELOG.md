@@ -27,3 +27,13 @@
 ### 中文
 
 - 紧急修复了模组配置文件的一些问题。
+
+## 1.0.2
+
+### English
+
+- Add a class introduction document for this mod (**ModClassIntroduction.md**, bilingual in Chinese and English).
+
+### 中文
+
+- 为本模组补充职业介绍文档（**ModClassIntroduction.md**，中英双语）。
