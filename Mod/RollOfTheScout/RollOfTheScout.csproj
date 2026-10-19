@@ -1,0 +1,119 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>com.peakmodding.RollOfTheScout</AssemblyName>
+    <AssemblyTitle>RollOfTheScout</AssemblyTitle>
+    <Version>1.0.0</Version>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <!--
+      发布版不生成调试符号：无论 embedded 还是 portable，DLL 的调试目录都会记录构建时
+      源码 / 符号文件的绝对路径（例如「&lt;你的构建目录&gt;\xxx.cs」），等于把本机构建目录一并分发。
+      置 none 后 DLL 内不再包含任何本机路径。（如需本地调试，可临时改回 portable。）
+    -->
+    <DebugSymbols>false</DebugSymbols>
+    <DebugType>none</DebugType>
+    <!-- 生成物统一放到工程根目录的 bin/，方便拷贝 -->
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <!--
+    游戏 / BepInEx 的本机绝对路径不再写死在本工程里（避免泄露本机目录）：
+    统一由仓库根目录的 Directory.Build.props 提供。请复制仓库根目录的
+    Config.Build.user.props.example 为 Config.Build.user.props，填写 PeakRoot / BepInExCore。
+  -->
+
+  <ItemGroup>
+    <!-- 与附属模组共用的第三方头顶id显示模组兼容层（同一份源码，避免两处实现分叉） -->
+    <Compile Include="..\Shared\ThirdPartyOverheadNameCompat.cs" />
+    <!-- 与附属模组共用的「原生字体叠加层」（用游戏自带 TMP 字体绘制，取代 IMGUI 自绘） -->
+    <Compile Include="..\Shared\PeakNativeUi.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="BepInEx">
+      <HintPath>$(BepInExCore)\BepInEx.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(BepInExCore)\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(PeakRoot)\PEAK_Data\Managed\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(PeakRoot)\PEAK_Data\Managed\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(PeakRoot)\PEAK_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>$(PeakRoot)\PEAK_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- 主机屏幕提示（OnGUI / GUIStyle）所需的 IMGUI 模块 -->
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>$(PeakRoot)\PEAK_Data\Managed\UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- 提示文本的字体样式（FontStyle / TextAnchor）所需的 TextRendering 模块 -->
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(PeakRoot)\PEAK_Data\Managed\UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- 读取「职业显示」按键（UnityEngine.Input / KeyCode）所需的旧版输入模块 -->
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(PeakRoot)\PEAK_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- 「头顶职业前缀」需要写入 TMP 文本（PlayerName.text / richText） -->
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>$(PeakRoot)\PEAK_Data\Managed\Unity.TextMeshPro.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(PeakRoot)\PEAK_Data\Managed\UnityEngine.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- 自建 Canvas / 屏幕叠加层（Canvas、RenderMode）所需的 UI 模块 -->
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>$(PeakRoot)\PEAK_Data\Managed\UnityEngine.UIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="PhotonUnityNetworking">
+      <HintPath>$(PeakRoot)\PEAK_Data\Managed\PhotonUnityNetworking.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="PhotonRealtime">
+      <HintPath>$(PeakRoot)\PEAK_Data\Managed\PhotonRealtime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Photon3Unity3D">
+      <HintPath>$(PeakRoot)\PEAK_Data\Managed\Photon3Unity3D.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Zorro.Core.Runtime">
+      <HintPath>$(PeakRoot)\PEAK_Data\Managed\Zorro.Core.Runtime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- ItemDatabase 继承链上的 Odin/Sirenix 类型需要这些引用 -->
+    <Reference Include="Sirenix.Serialization">
+      <HintPath>$(PeakRoot)\PEAK_Data\Managed\Sirenix.Serialization.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Sirenix.Utilities">
+      <HintPath>$(PeakRoot)\PEAK_Data\Managed\Sirenix.Utilities.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Sirenix.OdinInspector.Attributes">
+      <HintPath>$(PeakRoot)\PEAK_Data\Managed\Sirenix.OdinInspector.Attributes.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

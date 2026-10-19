@@ -1,0 +1,29 @@
+<Project>
+
+  <!--
+    ============================================================================
+    仓库根级 MSBuild 配置 —— 自动被 Mod/RollOfTheScout 与 Mod/RollOfTheScoutClient 导入
+    ============================================================================
+    作用：把各工程的「本机环境路径」集中到一处，避免写死在 .csproj 里。
+
+    使用方式：
+      1. 复制 Config.Build.user.props.example 为 Config.Build.user.props；
+      2. 按本机实际情况填写 PeakRoot / BepInExCore；
+      3. Config.Build.user.props 已被 .gitignore 排除，不会误提交。
+
+    未提供该文件时，使用下面的兜底默认值（Steam 常见默认安装位置）。
+  -->
+  <Import Project="$(MSBuildThisFileDirectory)Config.Build.user.props"
+          Condition="Exists('$(MSBuildThisFileDirectory)Config.Build.user.props')" />
+
+  <PropertyGroup Condition="'$(PeakRoot)' == ''">
+    <!-- PEAK 游戏安装目录（内含 PEAK_Data\Managed\Assembly-CSharp.dll） -->
+    <PeakRoot>C:\Program Files (x86)\Steam\steamapps\common\PEAK</PeakRoot>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(BepInExCore)' == ''">
+    <!-- BepInEx 的 core 目录（内含 BepInEx.dll / 0Harmony.dll） -->
+    <BepInExCore>$(PeakRoot)\BepInEx\core</BepInExCore>
+  </PropertyGroup>
+
+</Project>
