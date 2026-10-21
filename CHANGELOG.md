@@ -94,3 +94,33 @@
     - 玩家做出【不行不行】表情（`A_Scout_Emote_Nono`）后会立即转职一次（与食用转职物品一致），并与物品转职共用转职次数。
     - 若转职表情与职业效果强制播放的表情重复冲突，则以职业效果优先，不会触发转职。
     - 新增配置项 `[通用] 转职-表情启用`（默认 false）与 `[通用] 转职-表情`（默认 不行不行）。
+
+## 1.0.5
+
+### English
+
+- **Fixed** Langwang 【Premium Berry】: the "purple kingberry" was mistakenly written as the "yellow kingberry", and the internal-test change had not been fully applied. 
+    - All occurrences have now been corrected to the purple kingberry (`Kingberry Purple`); the config entries have been changed to `[Langwang] premiumBerryPurpleKingberryItem` / `premiumBerryPurpleKingberryWeight`, and `[Langwang] kingberryItems` / `[Cook] logisticsFoodPool` no longer contain `Kingberry Yellow`.
+- **Fixed** MilesSoul 【Seal Power】: when a client MilesSoul player used Scout gem items repeatedly at high frequency, the petrify value could be deducted extra or even reduced to zero. 
+    - Root cause: lost updates caused by absolute write-back combined with asynchronous synchronization** — a client's `petrifyAmount` is asynchronously synced back to the host by the **owner client**. The original implementation accumulated each evaluated petrification reduction into a pending queue, then after a 0.35s delay wrote it back using `HostApi.SetPetrify` (`RPC_SyncPetrify`, an **absolute assignment**):
+        1. Under high-frequency use, the `cur` value read by the host lags behind the client's true value;
+        2. After the pending queue has accumulated multiple -5s, it writes back absolutely using the stale `cur - pending`;
+        3. This absolute assignment also overwrites the in-flight +7 increment that has already been used but not yet synced to the host → **an extra deduction**;
+        4. Repeating this cycle can drive petrification down to 0.
+    - The absolute write-back for the petrify reduction now waits until the petrify value has been **quiet for 0.75 seconds** (deferred by at most 4 seconds during continuous use), so it no longer overwrites in-flight increases that have not yet been synced to the host; the detection threshold is now strictly greater than 2.5.
+- **New** The number of Scoutmasters spawned by MilesSoul 【Soul Hindrance】 present on the field at the same time is now capped at 4. 
+    - This cap is hard-coded and has no config entry.
+
+### 中文
+
+- **修复** 榔王【精品大果】：“紫荔莓”误写为“黄荔莓”，内测修改未完全更新的问题。
+    - 现已全部修正为紫荔莓（`Kingberry Purple`），配置项改为 `[榔王] 精品大果-紫荔莓物品` / `精品大果-紫荔莓权重`，`荔莓物品` ， `后勤保障-食物池` 不再包含 `Kingberry Yellow`。
+- **修复** 残魂【封印之力】：客机残魂连续高频使用童军宝石道具时，石化值可能被额外扣除甚至清零的问题。
+    - 根因：绝对写回+异步同步的丢更新——客机的 `petrifyAmount` 由**属主客户端**异步同步回主机。原实现把每次判定的减石化量累积到待办，延迟 0.35s 后用 `HostApi.SetPetrify`（`RPC_SyncPetrify`，**绝对赋值**）写回：
+        1. 高频使用时，主机读到的 `cur` 落后于客机真实值；
+        2. 待办累积了多次 -5 后，按过期的 `cur - pending` 绝对写回；
+        3. 该绝对赋值把「已经使用、但尚未同步到主机」的在途 +7 增量一并覆盖 → **额外扣除**；
+        4. 反复循环即可把石化扣到 0。
+    - 减石化的绝对写回现在会等待石化值**安静 0.75秒**后执行（持续使用时最多推迟4秒），不再覆盖尚未同步到主机的在途增量；判定阈值改为严格大于2.5。
+- **新增** 残魂【众魂阻挠】效果生成的童军领队 的 场上存在数量上限，固定为4。
+    - 此项为硬编码，无配置项。

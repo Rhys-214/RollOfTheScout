@@ -131,10 +131,9 @@ namespace RollOfTheScout
         // 飞起来（太空人）：拾取物品按概率变成火箭背包 / 喷气背包，并在脚下生成
         public const string Rocketpack = "Rocketpack";                       // 火箭背包
 
-        // 精品大果（榔王）：荔莓（默认取王莓系列：绿王莓 / 黄王莓 / 紫王莓）
+        // 精品大果（榔王）：荔莓（默认取王莓系列：绿王莓 / 紫王莓）
         public const string KingberryGreen = "Kingberry Green";              // 绿王莓（青荔莓）
-        public const string KingberryYellow = "Kingberry Yellow";            // 黄王莓（黄荔莓）
-        public const string KingberryPurple = "Kingberry Purple";            // 紫王莓
+        public const string KingberryPurple = "Kingberry Purple";            // 紫王莓（紫荔莓）
     }
 
     /// <summary>带权重的物品候选。</summary>

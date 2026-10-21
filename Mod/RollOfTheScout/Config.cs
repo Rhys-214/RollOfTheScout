@@ -135,6 +135,8 @@ namespace RollOfTheScout
             public ConfigEntry<bool> ReclassEnabled { get; private set; }
             public ConfigEntry<string> ReclassItem { get; private set; }
             public ConfigEntry<int> ReclassCount { get; private set; }
+            public ConfigEntry<bool> ReclassEmoteEnabled { get; private set; }
+            public ConfigEntry<string> ReclassEmoteName { get; private set; }
             public ConfigEntry<bool> NightHeatEnabled { get; private set; }
             public ConfigEntry<float> NightHeatIntervalSeconds { get; private set; }
             public ConfigEntry<float> NightHeatAmount { get; private set; }
@@ -190,6 +192,18 @@ namespace RollOfTheScout
                     "每名玩家每局最多可成功转职的次数（默认 1）。\n" +
                     "每次成功转职消耗 1 次；没有可转职业时不消耗次数。\n" +
                     "设为 0 等价于关闭转职。每局开始时重置。");
+                ReclassEmoteEnabled = BindL(config, "通用", "转职-表情启用", false,
+                    "是否允许玩家通过做「转职-表情」来转职（默认**关闭**）。\n" +
+                    "开启后：玩家本人做出指定表情即可立即转职一次，效果与食用「转职-触发物品」完全一致，\n" +
+                    "并与物品转职**共用**上面的「转职-次数」（每次成功都消耗 1 次）。\n" +
+                    "只在玩家**存活、未昏迷、未死亡**时生效；主机为职业效果强制播放的表情不会触发转职。\n" +
+                    "注意：「不行不行」是高频沟通表情，默认关闭以避免误触消耗掉本局唯一的转职机会。");
+                ReclassEmoteName = BindL(config, "通用", "转职-表情",
+                    ConfigLocalization.UseEnglish ? "No No" : "不行不行",
+                    "触发转职的表情。可填「不行不行」（默认）这类显示名，也可直接填原版动画名\n" +
+                    "（如 A_Scout_Emote_Nono）。大小写不敏感；留空则表情转职不会触发。\n" +
+                    "为避免与职业效果冲突，该值**不允许**是跳舞 / 后空翻 / 装死等会被主机强制播放的表情\n" +
+                    "（A_Scout_Emote_Dance / Dance1 / Dance2 / BackFlip / PlayDead），命中时表情转职自动失效。");
                 NightHeatEnabled = BindL(config, "通用", "夜晚抵消寒冷", true,
                     "是否抵消「天阶 5 及以上难度」夜晚的寒冷（夜晚每 5 秒 +2.5 寒冷）。\n" +
                     "原理：该夜寒由原版在**每个玩家自己的客户端上**结算，主机无法直接关闭，\n" +
@@ -1606,14 +1620,14 @@ namespace RollOfTheScout
                     "Apple Berry Green,Apple Berry Yellow,Apple Berry Red,Pepper Berry," +
                     "Berrynana Pink,Berrynana Yellow,Berrynana Blue,Berrynana Brown," +
                     "Clusterberry Black,Clusterberry Yellow,Clusterberry Red," +
-                    "Kingberry Green,Kingberry Purple,Kingberry Yellow," +
+                    "Kingberry Green,Kingberry Purple," +
                     "Prickleberry_Gold,Prickleberry_Red,Winterberry Orange,Winterberry Yellow,Napberry," +
                     // 蘑菇（含各种有毒变种）
                     "Mushroom Chubby,Mushroom Cluster,Mushroom Cluster Poison," +
                     "Mushroom Lace,Mushroom Lace Poison,Mushroom Normie,Mushroom Normie Poison," +
                     "Shroomberry_Blue,Shroomberry_Green,Shroomberry_Purple,Shroomberry_Red,Shroomberry_Yellow",
                     "【后勤保障】随机食物的候选池（英文逗号分隔的物品预制体名）。\n" +
-                    "默认 53 项：普通食物 22 + 全部浆果 19 + 蘑菇 12（含 Mushroom Cluster Poison、Mushroom Lace Poison、\n" +
+                    "默认 52 项：普通食物 22 + 浆果 18 + 蘑菇 12（含 Mushroom Cluster Poison、Mushroom Lace Poison、\n" +
                     "Mushroom Normie Poison 等有毒变种）。\n" +
                     "写错或未实装的名称会被自动跳过。留空时退化为「数据库中带恢复饥饿组件 Action_RestoreHunger 的全部物品」。");
 
@@ -2525,6 +2539,7 @@ namespace RollOfTheScout
             public ConfigEntry<float> NasaHotReduce { get; private set; }
             public ConfigEntry<float> NasaColdReduce { get; private set; }
             public ConfigEntry<float> NasaExtraBonus { get; private set; }
+            public ConfigEntry<float> NasaExtraCooldownSeconds { get; private set; }
 
             public void Initialize(ConfigFile config)
             {
@@ -2588,6 +2603,10 @@ namespace RollOfTheScout
                 NasaExtraBonus = BindL(config, "太空人", "NASA-额外增加", 0.025f,
                     "【NASA】每次该太空人获得（增加）蛛网 / 捕蝇草 / 诅咒时，额外追加的同种状态值（0.025 = 2.5 点）。\n" +
                     "即：诅咒每增加 X 点，会额外再 +2.5 诅咒；蛛网 / 捕蝇草同理。默认 0.025。设为 0 关闭。");
+                NasaExtraCooldownSeconds = BindL(config, "太空人", "NASA-额外增加-冷却", 1f,
+                    "【NASA】每次为「蛛网 / 捕蝇草 / 诅咒」额外追加一次后，在多少秒内**不再检测、也不再追加**（秒）。\n" +
+                    "用于避免「主机读到的远端状态同步滞后 → 同一笔增加被反复识别 → 诅咒增加一次就无限连加」。\n" +
+                    "默认 1.0。设为 0 或负数关闭冷却（退回旧行为）。");
             }
         }
 
@@ -2604,8 +2623,8 @@ namespace RollOfTheScout
             public ConfigEntry<float> BerryIntervalSeconds { get; private set; }
             public ConfigEntry<string> GreenBerryItem { get; private set; }
             public ConfigEntry<int> GreenBerryWeight { get; private set; }
-            public ConfigEntry<string> YellowBerryItem { get; private set; }
-            public ConfigEntry<int> YellowBerryWeight { get; private set; }
+            public ConfigEntry<string> PurpleBerryItem { get; private set; }
+            public ConfigEntry<int> PurpleBerryWeight { get; private set; }
             public ConfigEntry<string> BerryItems { get; private set; }
 
             public ConfigEntry<float> AddictionDrowsyPerEat { get; private set; }
@@ -2641,15 +2660,15 @@ namespace RollOfTheScout
                     "食用后榔王获得一次加速效果。");
                 GreenBerryWeight = BindL(config, "榔王", "精品大果-青荔莓权重", 10,
                     "【精品大果】抽中「青荔莓」的权重。默认 10。");
-                YellowBerryItem = BindL(config, "榔王", "精品大果-黄荔莓物品", "Kingberry Yellow",
-                    "【精品大果】「黄荔莓」的物品预制体名。默认 Kingberry Yellow（黄王莓）。\n" +
+                PurpleBerryItem = BindL(config, "榔王", "精品大果-紫荔莓物品", "Kingberry Purple",
+                    "【精品大果】「紫荔莓」的物品预制体名。默认 Kingberry Purple（紫王莓）。\n" +
                     "食用后榔王获得一次无限体力效果。");
-                YellowBerryWeight = BindL(config, "榔王", "精品大果-黄荔莓权重", 5,
-                    "【精品大果】抽中「黄荔莓」的权重。默认 5。");
-                BerryItems = BindL(config, "榔王", "荔莓物品", "Kingberry Green,Kingberry Yellow,Kingberry Purple",
+                PurpleBerryWeight = BindL(config, "榔王", "精品大果-紫荔莓权重", 5,
+                    "【精品大果】抽中「紫荔莓」的权重。默认 5。");
+                BerryItems = BindL(config, "榔王", "荔莓物品", "Kingberry Green,Kingberry Purple",
                     "【上瘾】【没吃的赶紧戒】中视为「荔莓」的物品预制体名，英文逗号分隔。\n" +
-                    "默认：绿王莓 / 黄王莓 / 紫王莓（王莓系列）。\n" +
-                    "若与实际游戏内「荔莓」称呼不符，请把真实预制体名填入此处（含青 / 黄荔莓）。");
+                    "默认：绿王莓 / 紫王莓（王莓系列）。\n" +
+                    "若与实际游戏内「荔莓」称呼不符，请把真实预制体名填入此处（含青 / 紫荔莓）。");
 
                 // ---------------- 【上瘾】 ----------------
                 AddictionDrowsyPerEat = BindL(config, "榔王", "上瘾-每次困倦", 0.30f,

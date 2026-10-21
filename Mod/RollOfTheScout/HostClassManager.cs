@@ -42,6 +42,112 @@ namespace RollOfTheScout
         /// <summary>转职两条触发通道之间的去重窗口（秒）。</summary>
         private const float ReclassDedupWindow = 0.5f;
 
+        // ===============================================================
+        // 表情转职（与物品转职共用转职次数）
+        // ===============================================================
+
+        /// <summary>「不行不行」表情的原版动画名（主机日志实测确认，见 §表情名观测）。</summary>
+        private const string EmoteNoNo = "A_Scout_Emote_Nono";
+
+        /// <summary>
+        /// 「职业效果强制播放表情」的抑制计数。大于 0 时，期间收到的表情 RPC **不参与表情转职判定**。
+        ///
+        /// 背景：舞王【全场欢呼】/ 待皓【脚滑】等效果由主机直接调用
+        /// <c>RPCA_PlayRemove(RpcTarget.All)</c> 强制播放表情；主机作为发送方会**同步收到同一条 RPC**，
+        /// 与玩家本人自愿做表情走的是同一个回调，无法从入口区分。因此在强制调用前后增减该计数，
+        /// 保证「职业效果优先」：即使配置的转职表情与强制表情重名，也不会误触发转职。
+        /// 用计数而非 bool，避免多个强制表情嵌套调用时提前复位。
+        /// </summary>
+        private int _suppressReclassEmote;
+
+        /// <summary>已经提示过「配置的转职表情与职业强制表情冲突」的配置值（避免每次表情都刷日志）。</summary>
+        private string _reclassEmoteWarnedRaw;
+
+        /// <summary>
+        /// 该表情是否就是配置的「转职表情」。
+        ///
+        /// · 配置值既支持显示名（默认「不行不行」），也支持直接填原版动画名（如 <c>A_Scout_Emote_Nono</c>），大小写不敏感；
+        /// · 为落实「职业效果优先」，若配置值等于任何会被主机**强制播放**的表情
+        ///   （跳舞 / 后空翻 / 装死），则视为无效配置、永不触发，并只提示一次。
+        /// </summary>
+        private bool IsReclassEmote(string emoteName)
+        {
+            string raw = ModConfig.General.ReclassEmoteName.Value;
+            if (string.IsNullOrWhiteSpace(raw)) return false;
+
+            string target = ResolveEmoteName(raw);
+            if (string.IsNullOrEmpty(target)) return false;
+
+            if (IsForcedEmoteName(target))
+            {
+                if (!string.Equals(_reclassEmoteWarnedRaw, raw))
+                {
+                    _reclassEmoteWarnedRaw = raw;
+                    Plugin.Log.LogWarning(
+                        $"[RollOfTheScout] 表情转职：配置的「转职-表情」= {raw} 与职业效果强制播放的表情冲突，" +
+                        $"为免误触发转职，本次配置**不会**生效（职业效果优先）。请改填「不行不行」等非强制表情。");
+                }
+                return false;
+            }
+
+            return string.Equals(emoteName, target, System.StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>把配置里的表情名解析为原版动画名：显示名「不行不行」/「No No」→ <c>A_Scout_Emote_Nono</c>，其余原样使用。</summary>
+        private static string ResolveEmoteName(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+            string name = raw.Trim();
+            if (name == "不行不行"
+                || name.Equals("NoNo", System.StringComparison.OrdinalIgnoreCase)
+                || name.Equals("No No", System.StringComparison.OrdinalIgnoreCase))
+            {
+                return EmoteNoNo;
+            }
+            return name;
+        }
+
+        /// <summary>该动画名是否属于「主机会为职业效果强制播放」的表情（这些名字禁止用作转职表情）。</summary>
+        private static bool IsForcedEmoteName(string emoteName)
+        {
+            if (string.IsNullOrEmpty(emoteName)) return false;
+            if (emoteName.Equals("A_Scout_Emote_BackFlip", System.StringComparison.OrdinalIgnoreCase)) return true;
+            if (emoteName.Equals("A_Scout_Emote_PlayDead", System.StringComparison.OrdinalIgnoreCase)) return true;
+            if (emoteName.Equals("A_Scout_Emote_Dance", System.StringComparison.OrdinalIgnoreCase)) return true;
+            if (emoteName.Equals("A_Scout_Emote_Dance1", System.StringComparison.OrdinalIgnoreCase)) return true;
+            if (emoteName.Equals("A_Scout_Emote_Dance2", System.StringComparison.OrdinalIgnoreCase)) return true;
+
+            // 强制跳舞用的是配置「舞王-跳舞动作名」的第一项，也要一并排除
+            string forcedDance = FirstDanceEmoteName();
+            return !string.IsNullOrEmpty(forcedDance)
+                && emoteName.Equals(forcedDance, System.StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// 表情转职入口（由 <see cref="OnEmotePlayed"/> 在舞王判定之前调用）。
+        ///
+        /// 触发条件（全部满足）：
+        /// · 模组 / 转职 / 表情转职开关均开启；
+        /// · 是配置的转职表情（只看 <c>emoteName</c>，**不看 <c>succeeded</c>** —— 后者是原版随机值）；
+        /// · 做表情的玩家**本人存活**（非死亡、非昏迷）；
+        /// · 该表情不是主机为职业效果强制播放的（<see cref="_suppressReclassEmote"/>）。
+        /// 触发后与物品转职走同一实现，**共用转职次数**与去重窗口。
+        /// </summary>
+        private void OnReclassEmotePlayed(Character character, string emoteName)
+        {
+            if (!_inRun) return;
+            if (character == null || string.IsNullOrEmpty(emoteName)) return;
+            if (!ModConfig.General.Enabled.Value) return;
+            if (!ModConfig.General.ReclassEmoteEnabled.Value) return;
+
+            if (_suppressReclassEmote > 0) return;   // 职业效果的强制表情优先
+            if (IsDead(character)) return;            // 必须存活：非死亡、非昏迷
+            if (!IsReclassEmote(emoteName)) return;
+
+            string label = ModConfig.General.ReclassEmoteName.Value;
+            TryReclass(character, $"通过「{label}」表情转职");
+        }
+
         // 待皓·模因污染：玩家稳定标识 → 去重窗口结束时刻。与转职同理，同一次「食用」可能同时
         // 经由 Harmony 补丁（Item.Consume）与全局事件（GlobalEvents.OnItemConsumed）两条通道到达。
         private readonly Dictionary<string, float> _memeGuardUntil = new Dictionary<string, float>();
@@ -76,6 +182,43 @@ namespace RollOfTheScout
         //（实测问题：开局自带 10 诅咒的后勤，士气 -10 后连自身的 10 一起被清成 0）。
         private readonly Dictionary<string, float> _moraleCurseBefore = new Dictionary<string, float>();
         private readonly Dictionary<string, int> _moralePetrifyBefore = new Dictionary<string, int>();
+
+        /// <summary>
+        /// 领袖「士气」的**待回退**记账：玩家稳定标识 → 尚未确认完成的回退量。
+        ///
+        /// 为什么不能像旧实现那样「复活当下读一次当前值、算一次差额就完事」：
+        /// 主机读到的是远端玩家**同步回来**的状态值，存在延迟。领袖死亡时下发的 +10 诅咒 / 石化，
+        /// 若在领袖复活那一刻尚未同步回主机，`当前值 − 受罚前值` 会算成 0（或只算出一部分），
+        /// 于是这次回退被跳过，**惩罚就永久留在玩家身上**（实测：多局累积后和平主义者出现 40 诅咒）。
+        ///
+        /// 现在的做法与「复活继承·石化校正」同构：登记「受罚前值 + 本次惩罚量」，随后每隔
+        /// <see cref="MoraleRevertRecheckDelay"/> 秒**反复校正**（幂等、绝对量记账），
+        /// 直到确认惩罚已全部消失，或到达 <see cref="MoraleRevertTimeout"/> 秒超时告警。
+        /// </summary>
+        private sealed class MoraleRevert
+        {
+            /// <summary>被回退的玩家（已销毁 / 离开时置空，用于结束待办）。</summary>
+            public Character Target;
+            /// <summary>受罚前的诅咒值（首次登记时的基准，多次惩罚累加时保持最早的基准）。</summary>
+            public float CurseBefore;
+            /// <summary>本次需要回退的诅咒总量。</summary>
+            public float CursePenalty;
+            /// <summary>已经下发的回退量（正数，避免重复下发）。</summary>
+            public float CurseReverted;
+            public int PetrifyBefore;
+            public int PetrifyPenalty;
+            public int PetrifyReverted;
+            public float NextCheck;
+            public float Deadline;
+        }
+
+        private readonly Dictionary<string, MoraleRevert> _moraleReverts = new Dictionary<string, MoraleRevert>();
+
+        /// <summary>士气回退的两次校正之间的等待（秒）：留出远端客户端把状态同步回主机的时间。</summary>
+        private const float MoraleRevertRecheckDelay = 0.6f;
+
+        /// <summary>士气回退的总时长上限（秒），超时放弃并打印警告。</summary>
+        private const float MoraleRevertTimeout = 6f;
 
         /// <summary>引擎的最小状态步长：只有 ≥ 该值（且为其整数倍）的增量才会实际生效。</summary>
         private const float StatusIncrement = 0.025f;
@@ -491,10 +634,27 @@ namespace RollOfTheScout
         /// <summary>宝石「使用」两条触发通道之间的去重窗口（秒）。</summary>
         private const float MilesUseDedupWindow = 0.3f;
 
-        // 【封印之力】客机宝石使用启发式判定：玩家稳定标识 → 上一次轮询时的石化值（0~100）。
+        // 【封印之力】客机宝石使用启发式判定：玩家稳定标识 → 上一次轮询时的石化值（0~100，**保留小数**）。
         // 童军宝石的直接使用是使用者客户端的本地动作、不广播 RPC，主机收不到；
-        // 因此对**客机**改用「手执童军宝石 + 石化值一次性增加 ≥ 阈值」作为判定依据（详见 PollMilesRemoteGemUse）。
-        private readonly Dictionary<string, int> _milesPetrifySnapshot = new Dictionary<string, int>();
+        // 因此对**客机**改用「手执童军宝石 + 石化值一次性增加 > 阈值」作为判定依据（详见 PollMilesRemoteGemUse）。
+        // 用浮点而不是 int：特殊石头恰好 +2.5，若取整会变成 +2 或 +3，导致「+3」穿过 2.5 阈值被误判为宝石使用。
+        private readonly Dictionary<string, float> _milesPetrifySnapshot = new Dictionary<string, float>();
+
+        // 【封印之力】客机启发式判定：玩家稳定标识 → 最近一次观测到「石化值上升」的时刻。
+        // 绝对写回（RPC_SyncPetrify）只在**石化值安静下来**后才执行：
+        // 客机的石化由属主客户端同步回主机，存在延迟；若在连续高频使用期间按主机端的旧值直接绝对写回，
+        // 会把「刚刚使用但尚未同步到主机」的增量一并覆盖掉 → 表现为石化被额外扣除、甚至清零。
+        // 记录上升时刻并在 TickMilesPetrifyReduce 中等待「安静窗口」即可避免该丢更新。
+        private readonly Dictionary<string, float> _milesPetrifyLastIncrease = new Dictionary<string, float>();
+
+        /// <summary>
+        /// 宝石减石化的「安静窗口」（秒）：最近一次观测到石化上升后，至少静置这么久才执行绝对写回，
+        /// 确保属主客户端的所有增量都已同步到主机，避免绝对写回覆盖掉在途增量。
+        /// </summary>
+        private const float MilesPetrifyQuietWindow = 0.75f;
+
+        /// <summary>最大等待时长（秒）：若玩家持续高频使用、石化一直上升，超过该时长仍会执行一次结算，避免无限推迟。</summary>
+        private const float MilesPetrifyMaxDefer = 4f;
 
         // 【封印之力】客机启发式判定的轮询计时器。
         private float _milesPetrifyTimer;
@@ -521,6 +681,8 @@ namespace RollOfTheScout
         {
             public int Amount;
             public float FireAt;
+            /// <summary>本批待办的首次登记时刻（用于「最大等待」兜底）。</summary>
+            public float FirstQueuedAt;
         }
 
         // 【零号守则】玩家稳定标识 → 「昏迷 → 无敌 + 传送到昏迷者处」的冷却结束时刻（Time.time）。
@@ -626,6 +788,17 @@ namespace RollOfTheScout
 
         /// <summary>【NASA】玩家稳定标识 → 上一次轮询的「蛛网 / 捕蝇草 / 诅咒」快照（追加值会后移快照，避免自触发）。</summary>
         private readonly Dictionary<string, float[]> _nasaBonusSnapshot = new Dictionary<string, float[]>();
+
+        /// <summary>
+        /// 【NASA】玩家稳定标识 → 三种状态各自的「额外加成冷却结束时刻」（与 <see cref="NasaBonusTypes"/> 同下标）。
+        ///
+        /// 为什么需要：主机读到的是远端角色**同步回来**的状态值，存在延迟。追加 +2.5 后若把快照写成
+        /// 「期望值」、而随后又读到尚未同步的旧值，就会把「同一笔增加」反复识别成新的增加，
+        /// 表现为「诅咒增加一次 → 无限连加」（实测日志可见连续多条「获得 2.5 点，额外追加 2.5 点」）。
+        /// 因此每次触发后在该状态上写入一段冷却：冷却期内既不检测、也不追加（只让基线向上跟随），
+        /// 等同步稳定后再恢复正常判定。
+        /// </summary>
+        private readonly Dictionary<string, float[]> _nasaBonusCooldownUntil = new Dictionary<string, float[]>();
 
         /// <summary>【太空食品安全】食用去重：玩家稳定标识 → 可再次处理的最早时刻。</summary>
         private readonly Dictionary<string, float> _astronautEatGuardUntil = new Dictionary<string, float>();
@@ -982,6 +1155,19 @@ namespace RollOfTheScout
         /// </summary>
         public void OnReclassItemConsumed(Character character)
         {
+            TryReclass(character, "食用转职物品");
+        }
+
+        /// <summary>
+        /// 转职的**共用实现**：物品转职与表情转职都走这里，因此二者**共用同一份转职次数**
+        /// （<see cref="_reclassUsed"/>）与同一段去重窗口（<see cref="_reclassGuardUntil"/>）。
+        /// 规则：在该玩家**当前未占满名额的其他职业**中按权重随机重新分配一个；
+        /// 每人每局最多成功转职「转职-次数」次（默认 1）；没有可转职业时不生效、也不消耗次数。
+        ///
+        /// <paramref name="source"/> 仅用于日志 / 提示措辞（如「食用转职物品」「通过『不行不行』表情转职」）。
+        /// </summary>
+        private void TryReclass(Character character, string source)
+        {
             if (!_inRun) return;
             if (character == null) return;
             if (!ModConfig.General.ReclassEnabled.Value) return;
@@ -989,7 +1175,7 @@ namespace RollOfTheScout
             string id = _ledger.IdOf(character);
             if (string.IsNullOrEmpty(id)) return;
 
-            // 去重：同一次食用不要被两条通道处理两次
+            // 去重：物品的两条兜底通道 / 物品与表情在极短时间内连续触发时，只处理一次
             if (_reclassGuardUntil.TryGetValue(id, out float guardUntil) && Time.time < guardUntil) return;
             _reclassGuardUntil[id] = Time.time + ReclassDedupWindow;
 
@@ -1021,7 +1207,7 @@ namespace RollOfTheScout
             ApplyClassChange(character, id, oldType, newType);
 
             Plugin.Log.LogInfo(
-                $"[RollOfTheScout] 转职：{Nick(character)} 食用转职物品，职业 {ClassLedger.Describe(oldType)} → " +
+                $"[RollOfTheScout] 转职：{Nick(character)} {source}，职业 {ClassLedger.Describe(oldType)} → " +
                 $"{ClassLedger.Describe(newType)}（本局已转职 {_reclassUsed[id]}/{maxCount} 次）。");
             ShowToast($"{Nick(character)} 转职：{ClassLedger.Describe(oldType)} → {ClassLedger.Describe(newType)}");
         }
@@ -1767,6 +1953,7 @@ namespace RollOfTheScout
             _moraleTargets.Clear();
             _moraleCurseBefore.Clear();
             _moralePetrifyBefore.Clear();
+            _moraleReverts.Clear();
             _sprintWatches.Clear();
             _staminaDrowsyWatches.Clear();
             _deathCurse.Clear();
@@ -1816,6 +2003,7 @@ namespace RollOfTheScout
             _milesRuleZeroPollTimer = 0f;
             _milesRemoteUseCooldownUntil.Clear();
             _milesPetrifyReduce.Clear();
+            _milesPetrifyLastIncrease.Clear();
             _milesRuleZeroCooldownUntil.Clear();
             _milesWasDowned.Clear();
             _milesZeroPetrifyTarget.Clear();
@@ -1833,6 +2021,7 @@ namespace RollOfTheScout
             _nasaTimer = 0f;
             _astronautInitialBalloons.Clear();
             _nasaBonusSnapshot.Clear();
+            _nasaBonusCooldownUntil.Clear();
             _astronautEatGuardUntil.Clear();
             _langwangBerryTimer = 0f;
             _langwangAddictionTimer = 0f;
@@ -1888,6 +2077,7 @@ namespace RollOfTheScout
             _moraleTargets.Clear();
             _moraleCurseBefore.Clear();
             _moralePetrifyBefore.Clear();
+            _moraleReverts.Clear();
             _sprintWatches.Clear();
             _staminaDrowsyWatches.Clear();
             _deathCurse.Clear();
@@ -1937,6 +2127,7 @@ namespace RollOfTheScout
             _milesRuleZeroPollTimer = 0f;
             _milesRemoteUseCooldownUntil.Clear();
             _milesPetrifyReduce.Clear();
+            _milesPetrifyLastIncrease.Clear();
             _milesRuleZeroCooldownUntil.Clear();
             _milesWasDowned.Clear();
             _milesZeroPetrifyTarget.Clear();
@@ -1954,6 +2145,7 @@ namespace RollOfTheScout
             _nasaTimer = 0f;
             _astronautInitialBalloons.Clear();
             _nasaBonusSnapshot.Clear();
+            _nasaBonusCooldownUntil.Clear();
             _astronautEatGuardUntil.Clear();
             _langwangBerryTimer = 0f;
             _langwangAddictionTimer = 0f;
@@ -5919,6 +6111,10 @@ namespace RollOfTheScout
                 foreach (var leader in revivedLeaders) RevertMorale(leader);
             }
 
+            // ---- 士气回退的**反复校正**：远端状态同步有延迟，单次读取可能读不到刚下发的 +10，
+            //      故在若干轮内持续补齐（幂等、按已回退量记账），直到确认完成或超时。
+            TickMoraleReverts();
+
             // ---- M·「享受」：对比上次轮询快照，把新受到的 9 种负面状态等量转化为额外体力 ----
             if (anyM) PollSuffer(characters);
 
@@ -6191,61 +6387,150 @@ namespace RollOfTheScout
 
             float curse = ModConfig.Leader.MoraleCurseAmount.Value;
             float petrify = ModConfig.Leader.MoralePetrifyAmount.Value;
+            int petrifyPoints = Mathf.RoundToInt(petrify * 100f);
 
-            int restored = 0;
-            float removedCurse = 0f;
-            int removedPetrify = 0;
+            float now = Time.time;
+            int registered = 0;
+            // 与旧实现一样遍历「当前在场角色」，以便把 Character 引用一并记入待办（回退时无需再反查）。
             foreach (var target in HostApi.GetActiveCharacters())
             {
-                var id = _ledger.IdOf(target);
+                string id = _ledger.IdOf(target);
                 if (string.IsNullOrEmpty(id) || !_moraleTargets.Contains(id)) continue;
 
-                // 诅咒：只按「受罚前快照 − 当前值」回退，并把回退量夹在 [-惩罚量, 0] 之间。
-                //   · 差额 ≤ 0 说明当前值不比受罚前多（惩罚已消失或从未生效）→ 什么都不做，
-                //     因此绝不会把玩家自己原有的诅咒一并清掉；
-                //   · 差额被夹到不超过 -惩罚量，保证不会多扣（主机读到远端状态滞后时也不会多扣）。
-                float appliedCurseDelta = 0f;
-                if (curse > 0f && _moraleCurseBefore.TryGetValue(id, out float beforeCurse))
+                // 只对「确实被施加过惩罚」的项登记（与旧实现一致：配置 <= 0 表示该维度不参与）
+                float beforeCurse = 0f;
+                int beforePetrify = 0;
+                float cursePenalty = 0f;
+                int petrifyPenalty = 0;
+                if (curse > 0f && _moraleCurseBefore.TryGetValue(id, out beforeCurse))
+                    cursePenalty = curse;
+                if (petrify > 0f && _moralePetrifyBefore.TryGetValue(id, out beforePetrify))
+                    petrifyPenalty = petrifyPoints;
+                if (cursePenalty <= 0f && petrifyPenalty <= 0) continue;
+
+                if (_moraleReverts.TryGetValue(id, out var pending))
                 {
-                    float currentCurse = HostApi.GetStatus(target, CharacterAfflictions.STATUSTYPE.Curse);
-                    appliedCurseDelta = Mathf.Clamp(beforeCurse - currentCurse, -curse, 0f);
-                    if (appliedCurseDelta <= -StatusIncrement)
-                        HostApi.ApplyStatus(target, CharacterAfflictions.STATUSTYPE.Curse, appliedCurseDelta);
-                    else
-                        appliedCurseDelta = 0f;
+                    // 上一次回退尚未确认完成时领袖又死了一次：累加本次惩罚，基准保持最早的那个。
+                    pending.Target = target;
+                    pending.CursePenalty += cursePenalty;
+                    pending.PetrifyPenalty += petrifyPenalty;
+                    pending.NextCheck = now;          // 立即尝试一次
+                    pending.Deadline = now + MoraleRevertTimeout;
                 }
-
-                // 石化：同构处理。石化是 0~100 的整数、走绝对赋值，故按整数差额回退。
-                int appliedPetrifyDelta = 0;
-                if (petrify > 0f && _moralePetrifyBefore.TryGetValue(id, out int beforePetrify))
+                else
                 {
-                    int currentPetrify = HostApi.GetPetrify(target);
-                    int petrifyBonus = Mathf.RoundToInt(petrify * 100f);
-                    appliedPetrifyDelta = Mathf.Clamp(beforePetrify - currentPetrify, -petrifyBonus, 0);
-                    if (appliedPetrifyDelta < 0)
-                        HostApi.SetPetrify(target, currentPetrify + appliedPetrifyDelta);
-                    else
-                        appliedPetrifyDelta = 0;
+                    pending = new MoraleRevert
+                    {
+                        Target = target,
+                        CurseBefore = beforeCurse,
+                        CursePenalty = cursePenalty,
+                        PetrifyBefore = beforePetrify,
+                        PetrifyPenalty = petrifyPenalty,
+                        NextCheck = now,
+                        Deadline = now + MoraleRevertTimeout,
+                    };
+                    _moraleReverts[id] = pending;
                 }
-
-                restored++;
-                removedCurse += appliedCurseDelta;
-                removedPetrify += appliedPetrifyDelta;
-
-                // 若该玩家在受罚期间死亡、且尚未复活，其死亡记录里也含这份惩罚。
-                // 这里把「实际回退量」从记录值里扣掉，否则复活继承会把惩罚原样恢复回来，
-                // 造成「-20 诅咒 -30 石化随即又被加回」的现象（实测问题 3）。
-                if (appliedCurseDelta < 0f && _deathCurse.TryGetValue(id, out float recordedCurse))
-                    _deathCurse[id] = Mathf.Max(0f, recordedCurse + appliedCurseDelta);
-                if (appliedPetrifyDelta < 0 && _deathPetrify.TryGetValue(id, out int recordedPetrify))
-                    _deathPetrify[id] = Mathf.Max(0, recordedPetrify + appliedPetrifyDelta);
+                registered++;
             }
+
             Plugin.Log.LogInfo(
-                $"[RollOfTheScout] 士气：领袖 {Nick(leader)} 复活，{restored} 名玩家恢复" +
-                $"（实际回退 诅咒 {removedCurse * 100f:0.#}、石化 {removedPetrify}）。");
+                $"[RollOfTheScout] 士气：领袖 {Nick(leader)} 复活，为 {registered} 名玩家登记回退" +
+                $"（诅咒 -{curse * 100f:0.#}/人、石化 -{petrifyPoints}/人；远端同步延迟时会在后续轮次补齐）。");
+
             _moraleTargets.Clear();
             _moraleCurseBefore.Clear();
             _moralePetrifyBefore.Clear();
+        }
+
+        /// <summary>
+        /// 推进所有「士气回退」待办：每隔 <see cref="MoraleRevertRecheckDelay"/> 秒校正一次，
+        /// 直到确认惩罚已从玩家身上消失（或超时）。
+        ///
+        /// 校正口径（与旧实现一致，只是**可重复执行**）：
+        /// · 诅咒：可回退量 = clamp(当前值 − 受罚前值, 0, 剩余未回退量)；按 0.025 量子向下取整后下发负增量。
+        ///          若当前值仍等于受罚前值（主机尚未收到 +10 的同步），本轮不下发，下一轮再试。
+        /// · 石化：同构，但石化走「绝对赋值」，可回退量 = min(当前值 − 受罚前值, 剩余未回退量)。
+        /// · 每笔实际下发的量记入「已回退」，因此**重复校正不会重复扣减**。
+        /// </summary>
+        private void TickMoraleReverts()
+        {
+            if (_moraleReverts.Count == 0) return;
+
+            float now = Time.time;
+            List<string> done = null;
+
+            foreach (var pair in _moraleReverts)
+            {
+                string id = pair.Key;
+                var rec = pair.Value;
+                var character = rec.Target;
+
+                if (character == null || character.photonView == null)
+                {
+                    (done ??= new List<string>()).Add(id);
+                    continue;
+                }
+                if (now < rec.NextCheck) continue;
+                rec.NextCheck = now + MoraleRevertRecheckDelay;
+
+                // ---- 诅咒：增量下发，按量子取整 ----
+                float curseRemaining = rec.CursePenalty - rec.CurseReverted;
+                if (curseRemaining >= StatusIncrement)
+                {
+                    float current = HostApi.GetStatus(character, CharacterAfflictions.STATUSTYPE.Curse);
+                    float visible = Mathf.Clamp(current - rec.CurseBefore, 0f, curseRemaining);
+                    float send = Mathf.Floor(visible / StatusIncrement) * StatusIncrement;
+                    if (send >= StatusIncrement)
+                    {
+                        HostApi.ApplyStatus(character, CharacterAfflictions.STATUSTYPE.Curse, -send);
+                        rec.CurseReverted += send;
+
+                        // 若该玩家在受罚期间死亡、且其死亡记录里也含这份惩罚，
+                        // 同步把记录值扣掉，避免复活继承把刚回退的惩罚又加回来。
+                        if (_deathCurse.TryGetValue(id, out float recordedCurse))
+                            _deathCurse[id] = Mathf.Max(0f, recordedCurse - send);
+                    }
+                }
+
+                // ---- 石化：绝对赋值，按整数回退 ----
+                int petrifyRemaining = rec.PetrifyPenalty - rec.PetrifyReverted;
+                if (petrifyRemaining > 0)
+                {
+                    int current = HostApi.GetPetrify(character);
+                    int visible = Mathf.Clamp(current - rec.PetrifyBefore, 0, petrifyRemaining);
+                    if (visible > 0)
+                    {
+                        HostApi.SetPetrify(character, current - visible);
+                        rec.PetrifyReverted += visible;
+                        if (_deathPetrify.TryGetValue(id, out int recordedPetrify))
+                            _deathPetrify[id] = Mathf.Max(0, recordedPetrify - visible);
+                    }
+                }
+
+                bool curseDone = rec.CurseReverted >= rec.CursePenalty - StatusIncrement * 0.5f;
+                bool petrifyDone = rec.PetrifyReverted >= rec.PetrifyPenalty;
+                if (curseDone && petrifyDone)
+                {
+                    (done ??= new List<string>()).Add(id);
+                    Plugin.Log.LogInfo(
+                        $"[RollOfTheScout] 士气回退完成：{Nick(character)} 已回退 诅咒 {rec.CurseReverted * 100f:0.#}、" +
+                        $"石化 {rec.PetrifyReverted}（登记量 {rec.CursePenalty * 100f:0.#}/{rec.PetrifyPenalty}）。");
+                }
+                else if (now >= rec.Deadline)
+                {
+                    (done ??= new List<string>()).Add(id);
+                    Plugin.Log.LogWarning(
+                        $"[RollOfTheScout] 士气回退超时：{Nick(character)} 未能确认全部回退" +
+                        $"（已回退 诅咒 {rec.CurseReverted * 100f:0.#}/{rec.CursePenalty * 100f:0.#}、" +
+                        $"石化 {rec.PetrifyReverted}/{rec.PetrifyPenalty}），已放弃本次校正。");
+                }
+            }
+
+            if (done != null)
+            {
+                foreach (var id in done) _moraleReverts.Remove(id);
+            }
         }
 
         // ---------------------------------------------------------------
@@ -7690,6 +7975,29 @@ namespace RollOfTheScout
             }
         }
 
+        /// <summary>【众魂阻挠】童军领队的场上**同时存在**上限（硬编码，不提供配置项）。</summary>
+        private const int MilesScoutmasterMaxAlive = 4;
+
+        /// <summary>
+        /// 【众魂阻挠】统计场上**存活**的童军领队数量。
+        /// 用原版 <c>Character.AllCharacters</c> + <c>data.isScoutmaster</c> 判定，零额外对象分配；
+        /// 只计存活者：已被击杀的领队尸体不再占用名额，避免上限被永久占死。
+        /// </summary>
+        private static int CountLivingScoutmasters()
+        {
+            var all = Character.AllCharacters;
+            int count = 0;
+            for (int i = 0; i < all.Count; i++)
+            {
+                var c = all[i];
+                if (c == null || c.data == null) continue;
+                if (!c.data.isScoutmaster) continue;
+                if (c.data.dead) continue;
+                count++;
+            }
+            return count;
+        }
+
         /// <summary>【众魂阻挠】累计使用童军宝石道具；每满 N 次生成 1 名童军领队（保留余数）。</summary>
         private void CountMilesGemUse(Character character)
         {
@@ -7704,7 +8012,18 @@ namespace RollOfTheScout
             if (count >= need)
             {
                 count -= need;
-                SpawnMilesScoutmaster(character);
+
+                // 场上同时存在的童军领队最多 4 名（硬编码上限）；到顶则本次不生成，避免堆叠。
+                int alive = CountLivingScoutmasters();
+                if (alive < MilesScoutmasterMaxAlive)
+                {
+                    SpawnMilesScoutmaster(character);
+                }
+                else
+                {
+                    Plugin.Log.LogInfo(
+                        $"[RollOfTheScout] 众魂阻挠：场上童军领队已达上限（{MilesScoutmasterMaxAlive} 名），本次不生成。");
+                }
             }
             _milesGemUseCount[id] = count;
         }
@@ -7958,7 +8277,7 @@ namespace RollOfTheScout
 
             if (!_milesPetrifyReduce.TryGetValue(id, out var pending))
             {
-                pending = new MilesPetrifyReduce();
+                pending = new MilesPetrifyReduce { FirstQueuedAt = Time.time };
                 _milesPetrifyReduce[id] = pending;
             }
             pending.Amount += points;
@@ -7984,6 +8303,18 @@ namespace RollOfTheScout
                 }
                 if (Time.time < pending.FireAt) continue;
 
+                // 关键：绝对写回必须等「石化值安静下来」。
+                // 客机的石化由属主客户端同步回主机，存在网络延迟；若在连续高频使用期间按主机端的旧值写回，
+                // 会把尚未同步到主机的在途增量一并覆盖（实测：高频使用进取宝石时石化被额外扣光）。
+                // 因此：最近一次观测到上升后需静置 MilesPetrifyQuietWindow；持续使用超过 MilesPetrifyMaxDefer
+                // 时兜底放行一次，避免无限推迟。
+                if (_milesPetrifyLastIncrease.TryGetValue(id, out float lastIncrease)
+                    && Time.time - lastIncrease < MilesPetrifyQuietWindow
+                    && Time.time - pending.FirstQueuedAt < MilesPetrifyMaxDefer)
+                {
+                    continue;
+                }
+
                 int cur = HostApi.GetPetrify(c);
                 int target = Mathf.Clamp(cur - pending.Amount, 0, 100);
                 HostApi.SetPetrify(c, target);
@@ -7995,7 +8326,11 @@ namespace RollOfTheScout
             }
             if (done != null)
             {
-                foreach (var id in done) _milesPetrifyReduce.Remove(id);
+                foreach (var id in done)
+                {
+                    _milesPetrifyReduce.Remove(id);
+                    _milesPetrifyLastIncrease.Remove(id);
+                }
             }
         }
 
@@ -8164,14 +8499,17 @@ namespace RollOfTheScout
         /// 既不广播 RPC 也不经过 `Item.Consume`，因此主机**收不到客机的使用信号**（主机本人已由本地动作补丁覆盖）。
         ///
         /// 原版中「增加石化」的来源只有两类：① 熔炉 / 雾沼的特殊石头（每接触一次恰好 **+2.5**）；
-        /// ② 使用童军宝石道具（每次增量 **大于 2.5**）。因此对客机改用启发式判定：
+        /// ② 使用童军宝石道具（每次增量 **严格大于 2.5**）。因此对客机改用启发式判定：
         /// **玩家手执童军宝石道具**（`CharacterData.currentItem`，由 `EquipSlotRpc` 同步到主机）
-        /// 且其石化值**一次性增加 ≥ `封印之力-客机判定阈值`（默认 2.5）** → 视为「使用了一次该宝石」。
+        /// 且其石化值**一次性增加 &gt; `封印之力-客机判定阈值`（默认 2.5）** → 视为「使用了一次该宝石」。
         ///
         /// 防误触与防重复：
         /// - 「手执宝石」是硬条件 —— 未手持宝石（如只是碰石头）不参与判定；
-        /// - 命中后写一条 `封印之力-客机判定冷却`（默认 2.5s）的每人冷却，避免「石化持续增加」型宝石（野心持续 +1）被反复结算；
-        /// - 仅对 `!photonView.IsMine`（客机）生效，避免与主机本人的本地动作补丁重复触发。
+        /// - 阈值比较用**严格大于**，恰好 +2.5 的特殊石头不会被误判；
+        /// - 命中后写一条 `封印之力-客机判定冷却`（默认 1s）的每人冷却，避免「石化持续增加」型宝石被反复结算；
+        /// - 仅对 `!photonView.IsMine`（客机）生效，避免与主机本人的本地动作补丁重复触发；
+        /// - 减石化改为「等待石化安静」后再绝对写回（见 <see cref="TickMilesPetrifyReduce"/>），
+        ///   避免高频使用时用过期值覆盖在途增量。
         /// </summary>
         private void PollMilesRemoteGemUse(List<Character> characters)
         {
@@ -8179,6 +8517,7 @@ namespace RollOfTheScout
             if (threshold <= 0f)
             {
                 _milesPetrifySnapshot.Clear();
+                _milesPetrifyLastIncrease.Clear();
                 return;
             }
 
@@ -8200,16 +8539,22 @@ namespace RollOfTheScout
                 string id = _ledger.IdOf(c);
                 if (string.IsNullOrEmpty(id)) continue;
 
-                int cur = HostApi.GetPetrify(c);
-                if (!_milesPetrifySnapshot.TryGetValue(id, out int prev))
+                float cur = Mathf.Clamp(c.data.petrifyAmount, 0f, 100f);
+                if (!_milesPetrifySnapshot.TryGetValue(id, out float prev))
                 {
                     _milesPetrifySnapshot[id] = cur;   // 首次见到：仅登记基线
                     continue;
                 }
                 _milesPetrifySnapshot[id] = cur;
 
-                int delta = cur - prev;
-                if (delta < threshold) continue;       // 增量不足（含特殊石头的 +2.5）→ 忽略
+                float delta = cur - prev;
+
+                // 任何上升都记为「活动时刻」，供延迟扣减等待安静窗口（避免绝对写回覆盖在途增量）。
+                if (delta > 0) _milesPetrifyLastIncrease[id] = Time.time;
+
+                // 阈值必须**严格大于**：熔炉 / 雾沼特殊石头每次恰好 +2.5，若用 `>=` 会被误判成一次宝石使用，
+                // 从而在玩家手执宝石靠近石头时凭空多扣石化。宝石自身代价均 ≥5，不受影响。
+                if (delta <= threshold) continue;   // 增量不足 / 仅是石头 → 忽略
 
                 string gem = FindHeldGemName(c);
                 if (gem == null) continue;             // 未手执童军宝石 → 不是「使用宝石」造成的
@@ -8222,9 +8567,9 @@ namespace RollOfTheScout
 
                 if (cooldown > 0f) _milesRemoteUseCooldownUntil[coolKey] = Time.time + cooldown;
                 Plugin.Log.LogInfo(
-                    $"[RollOfTheScout] 封印之力：{Nick(c)} 手执 {gem} 且石化 +{delta}（≥{threshold:0.#}），判定为使用该宝石。");
+                    $"[RollOfTheScout] 封印之力：{Nick(c)} 手执 {gem} 且石化 +{delta:0.#}（>{threshold:0.#}），判定为使用该宝石。");
                 // prev 即「使用前」的石化值（本次增量就发生在 prev → cur 之间），传给结算作为零号守则的抵消基准。
-                OnMilesGemUsed(c, gem, cloneSuccess: false, preUsePetrify: prev);
+                OnMilesGemUsed(c, gem, cloneSuccess: false, preUsePetrify: Mathf.RoundToInt(prev));
             }
         }
 
@@ -8407,6 +8752,11 @@ namespace RollOfTheScout
 
             bool isDance = IsDanceEmote(emoteName);
             LogObservedEmote(dancer, emoteName, isDance);
+
+            // 表情转职：必须放在 `if (!isDance) return;` **之前** ——
+            // 「不行不行」不是跳舞表情，放到后面会永远不生效。
+            OnReclassEmotePlayed(dancer, emoteName);
+
             if (!isDance) return;
 
             // 【全场欢呼】：自己（舞王）跳舞时，强制半径内的所有其他玩家一起跳舞
@@ -8534,7 +8884,17 @@ namespace RollOfTheScout
             }
 
             bool interrupted = InterruptClimbing(target);
-            target.photonView.RPC("RPCA_PlayRemove", RpcTarget.All, emoteName, true);
+            // 职业效果强制表情优先：抑制计数 > 0 期间收到的表情 RPC 不参与表情转职判定。
+            // （本 RPC 是 RpcTarget.All，主机作为发送方也会同步收到并进入 EmotePatch）
+            _suppressReclassEmote++;
+            try
+            {
+                target.photonView.RPC("RPCA_PlayRemove", RpcTarget.All, emoteName, true);
+            }
+            finally
+            {
+                _suppressReclassEmote = Mathf.Max(0, _suppressReclassEmote - 1);
+            }
             Plugin.Log.LogInfo($"[RollOfTheScout] {reason}：强制 {Nick(target)} 跳舞（{emoteName}）" +
                 $"{(interrupted ? "，已先打断攀爬" : "")}。");
             return true;
@@ -8554,7 +8914,16 @@ namespace RollOfTheScout
 
             const string emoteName = "A_Scout_Emote_BackFlip";
             bool interrupted = InterruptClimbing(target);
-            target.photonView.RPC("RPCA_PlayRemove", RpcTarget.All, emoteName, true);
+            // 职业效果强制表情优先：抑制计数 > 0 期间收到的表情 RPC 不参与表情转职判定
+            _suppressReclassEmote++;
+            try
+            {
+                target.photonView.RPC("RPCA_PlayRemove", RpcTarget.All, emoteName, true);
+            }
+            finally
+            {
+                _suppressReclassEmote = Mathf.Max(0, _suppressReclassEmote - 1);
+            }
             Plugin.Log.LogInfo($"[RollOfTheScout] {reason}：强制 {Nick(target)} 后空翻（{emoteName}）" +
                 $"{(interrupted ? "，已先打断攀爬" : "")}。");
             return true;
@@ -10275,6 +10644,10 @@ namespace RollOfTheScout
             float bonus = ModConfig.Astronaut.NasaExtraBonus.Value;
             if (bonus <= 0f) return;
 
+            // 触发后的冷却时长（秒）：默认 1.0；配置 <= 0 时退回「无冷却」的旧行为。
+            float cooldown = ModConfig.Astronaut.NasaExtraCooldownSeconds.Value;
+            float nowTime = Time.time;
+
             foreach (var character in characters)
             {
                 if (character == null) continue;
@@ -10293,20 +10666,43 @@ namespace RollOfTheScout
                     for (int i = 0; i < NasaBonusTypes.Length; i++)
                         prev[i] = HostApi.GetStatus(character, NasaBonusTypes[i]);
                     _nasaBonusSnapshot[id] = prev;
+
+                    // 冷却数组：全部视为「已到期」（可立即检测）
+                    var fresh = new float[NasaBonusTypes.Length];
+                    _nasaBonusCooldownUntil[id] = fresh;
                     continue;
+                }
+
+                if (!_nasaBonusCooldownUntil.TryGetValue(id, out float[] cool) || cool == null
+                    || cool.Length != NasaBonusTypes.Length)
+                {
+                    cool = new float[NasaBonusTypes.Length];
+                    _nasaBonusCooldownUntil[id] = cool;
                 }
 
                 for (int i = 0; i < NasaBonusTypes.Length; i++)
                 {
                     float now = HostApi.GetStatus(character, NasaBonusTypes[i]);
                     float delta = now - prev[i];
-                    if (isAstronaut && delta > 0f)
+                    bool cooling = cooldown > 0f && nowTime < cool[i];
+
+                    // delta 必须达到一个引擎量子的量级（0.025）才算「真的增加了」，
+                    // 避免浮点残差（日志曾出现「获得 0 点，额外追加 2.5 点」）误触发。
+                    if (isAstronaut && !cooling && delta > StatusIncrement * 0.5f)
                     {
                         HostApi.ApplyStatus(character, NasaBonusTypes[i], bonus);
                         prev[i] = now + bonus;
+                        // 触发后进入冷却：冷却期内不再检测该项、也不再追加
+                        if (cooldown > 0f) cool[i] = nowTime + cooldown;
                         Plugin.Log.LogInfo(
                             $"[RollOfTheScout] NASA：{Nick(character)} 获得「{NasaBonusTypes[i]}」{delta * 100f:0.#} 点，" +
                             $"额外追加 {bonus * 100f:0.#} 点。");
+                    }
+                    else if (cooling)
+                    {
+                        // 冷却期：基线只允许「向上跟随」。若读到尚未同步的旧值就下调基线，
+                        // 等同步到达时又会被当成一笔新的增加 → 正是无限连加的根因。
+                        if (now > prev[i]) prev[i] = now;
                     }
                     else
                     {
@@ -10517,17 +10913,17 @@ namespace RollOfTheScout
             return _langwangBerryItems.Contains(prefabName);
         }
 
-        /// <summary>【精品大果】：按权重发放 1 个荔莓（青 / 黄），优先放入 3 个物品栏空位，已满则脚下生成。</summary>
+        /// <summary>【精品大果】：按权重发放 1 个荔莓（青 / 紫），优先放入 3 个物品栏空位，已满则脚下生成。</summary>
         private void GrantLangwangBerry(Character langwang)
         {
             var pool = new List<WeightedItem>(2);
             string green = ModConfig.Langwang.GreenBerryItem.Value;
-            string yellow = ModConfig.Langwang.YellowBerryItem.Value;
+            string purple = ModConfig.Langwang.PurpleBerryItem.Value;
             int greenWeight = Mathf.Max(0, ModConfig.Langwang.GreenBerryWeight.Value);
-            int yellowWeight = Mathf.Max(0, ModConfig.Langwang.YellowBerryWeight.Value);
+            int purpleWeight = Mathf.Max(0, ModConfig.Langwang.PurpleBerryWeight.Value);
 
             if (!string.IsNullOrEmpty(green) && greenWeight > 0) pool.Add(new WeightedItem(green, greenWeight));
-            if (!string.IsNullOrEmpty(yellow) && yellowWeight > 0) pool.Add(new WeightedItem(yellow, yellowWeight));
+            if (!string.IsNullOrEmpty(purple) && purpleWeight > 0) pool.Add(new WeightedItem(purple, purpleWeight));
             if (pool.Count == 0) return;
 
             string picked = WeightedPicker.Pick(pool);
@@ -10598,7 +10994,7 @@ namespace RollOfTheScout
         /// 榔王 / 其他玩家 的食用处理（由 <c>Item.Consume</c> 补丁与 <c>GlobalEvents.OnItemConsumed</c> 双通道调用）。
         ///
         /// · 榔王自身：
-        ///     ①【精品大果】食用青荔莓 → 加速；食用黄荔莓 → 无限体力；并刷新「最近食用荔莓」时刻；
+        ///     ①【精品大果】食用青荔莓 → 加速；食用紫荔莓 → 无限体力；并刷新「最近食用荔莓」时刻；
         ///     ②【上瘾】食用非荔莓食物 → +困倦；
         ///     ③【纤维化】每次食用任意物品 → +损伤。
         /// · 其他玩家：
@@ -10630,8 +11026,8 @@ namespace RollOfTheScout
 
                     if (name == ModConfig.Langwang.GreenBerryItem.Value)
                         GrantSprint(character, "精品大果·青荔莓");
-                    else if (name == ModConfig.Langwang.YellowBerryItem.Value)
-                        GrantInfiniteStamina(character, "精品大果·黄荔莓");
+                    else if (name == ModConfig.Langwang.PurpleBerryItem.Value)
+                        GrantInfiniteStamina(character, "精品大果·紫荔莓");
                 }
                 else
                 {
@@ -11358,7 +11754,7 @@ namespace RollOfTheScout
                     var pool = new List<WeightedItem>
                     {
                         new WeightedItem(ModConfig.Langwang.GreenBerryItem.Value, ModConfig.Langwang.GreenBerryWeight.Value),
-                        new WeightedItem(ModConfig.Langwang.YellowBerryItem.Value, ModConfig.Langwang.YellowBerryWeight.Value),
+                        new WeightedItem(ModConfig.Langwang.PurpleBerryItem.Value, ModConfig.Langwang.PurpleBerryWeight.Value),
                     };
                     pool.RemoveAll(w => string.IsNullOrWhiteSpace(w.PrefabName));
                     string berry = WeightedPicker.Pick(pool);
@@ -11484,9 +11880,9 @@ namespace RollOfTheScout
                 case ClassType.Mage:   rec.Item1 = ItemNames.GuidebookScroll; return; // 魔法卷轴
                 case ClassType.Cook:   rec.Item1 = ItemNames.PortableStove; return;   // 后勤保障
                 case ClassType.Gunner: rec.Item1 = ItemNames.ScoutCannonItem; return; // 开炮
-                case ClassType.Langwang:                                             // 精品大果（绿 / 黄两件都登记，清理时都收回）
+                case ClassType.Langwang:                                             // 精品大果（青 / 紫两件都登记，清理时都收回）
                     rec.Item1 = ModConfig.Langwang.GreenBerryItem.Value;
-                    rec.Item2 = ModConfig.Langwang.YellowBerryItem.Value;
+                    rec.Item2 = ModConfig.Langwang.PurpleBerryItem.Value;
                     return;
             }
         }
@@ -11738,7 +12134,7 @@ namespace RollOfTheScout
                     var pool = new List<WeightedItem>
                     {
                         new WeightedItem(ModConfig.Langwang.GreenBerryItem.Value, ModConfig.Langwang.GreenBerryWeight.Value),
-                        new WeightedItem(ModConfig.Langwang.YellowBerryItem.Value, ModConfig.Langwang.YellowBerryWeight.Value),
+                        new WeightedItem(ModConfig.Langwang.PurpleBerryItem.Value, ModConfig.Langwang.PurpleBerryWeight.Value),
                     };
                     pool.RemoveAll(w => string.IsNullOrWhiteSpace(w.PrefabName));
                     string berry = WeightedPicker.Pick(pool);
