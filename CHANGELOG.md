@@ -114,7 +114,7 @@
 ### 中文
 
 - **修复** 榔王【精品大果】：“紫荔莓”误写为“黄荔莓”，内测修改未完全更新的问题。
-    - 现已全部修正为紫荔莓（`Kingberry Purple`），配置项改为 `[榔王] 精品大果-紫荔莓物品` / `精品大果-紫荔莓权重`，`荔莓物品` ， `后勤保障-食物池` 不再包含 `Kingberry Yellow`。
+    - 现已全部修正为紫荔莓（`Kingberry Purple`），配置项改为 `[榔王] 精品大果-紫荔莓物品` / `精品大果-紫荔莓权重`，`荔莓物品` 与 `后勤保障-食物池` 不再包含 `Kingberry Yellow`。
 - **修复** 残魂【封印之力】：客机残魂连续高频使用童军宝石道具时，石化值可能被额外扣除甚至清零的问题。
     - 根因：绝对写回+异步同步的丢更新——客机的 `petrifyAmount` 由**属主客户端**异步同步回主机。原实现把每次判定的减石化量累积到待办，延迟 0.35s 后用 `HostApi.SetPetrify`（`RPC_SyncPetrify`，**绝对赋值**）写回：
         1. 高频使用时，主机读到的 `cur` 落后于客机真实值；
@@ -124,3 +124,45 @@
     - 减石化的绝对写回现在会等待石化值**安静 0.75秒**后执行（持续使用时最多推迟4秒），不再覆盖尚未同步到主机的在途增量；判定阈值改为严格大于2.5。
 - **新增** 残魂【众魂阻挠】效果生成的童军领队 的 场上存在数量上限，固定为4。
     - 此项为硬编码，无配置项。
+
+## 1.0.6
+
+### English
+
+- **New** **Class introduction panel**: while the class-assignment panel is shown (default key: Tab), an extra panel now appears right below it showing **your own class's** keywords and a short introduction, so players can understand their class without opening the class document. The text follows the game language (Chinese / English). This is available on the host's screen, in the main mod's client mode, and in the optional client display addon. Only the local player's class is shown, not the whole class list.
+- **New** **Class intro compatibility**: the host now also broadcasts the class **keywords** and **intro** tables (Photon custom event 197, kinds 4 / 5, throttled to "class set changed" or once per 30 s). A client addon or older local copy that does not know a class added by a newer main mod now falls back to the host-provided text — so **updating the main mod no longer requires updating the client display addon** to see the new class's introduction. Local text is still preferred, so each client keeps its own language for known classes.
+- **Fixed** Firefighter 【Fireline Rescue】: a player carried by the firefighter could stay "attached" to the carrier after waking up and could not climb; the same happened again after death and revive.
+    - Root cause: in vanilla, `CharacterCarrying.Update` drops the carried player **only on the carrier's owning client**, while `RPCA_Die` / `ReviveCharacter` / `RPCA_ReviveAtPosition` never clear `isCarried` / `carrier`. If that single `RPCA_Drop` is missed, the victim keeps `carrier` forever; `CharacterCarrying.FixedUpdate` then applies a force of 500 toward the carrier every frame (looks like being stuck to the carrier, and climbing is impaired). Death and revive reuse the same Character object, so the state survives them. This mod makes that moment common: 【Fireline Rescue】 teleports the firefighter right onto the fainted player, and 【Warm Embrace】 heals the victim **on the carrier's back**, so the victim often wakes up exactly there — the very instants when vanilla would drop them.
+    - The host now broadcasts the vanilla `RPCA_Drop` (`RpcTarget.All`) whenever a drop was due but did not happen, so players who installed nothing are fixed as well.
+    - Also hardened in 1.0.6: the victim-side cleanup now runs for the **host's own character** too (previously local characters were skipped entirely, so a host carried by a client could stay glued forever); the watchdog now requires the inconsistent state to persist for 0.5 s before acting, so an in-flight `RPCA_StartCarry` / `RPCA_PassOut` (sent by different clients, with no cross-sender ordering guarantee) is never undone by mistake.
+- **Fixed** Firefighter 【Fireline Rescue】: the "cannot trigger while carrying a player" rule is now also enforced at execution time. Previously only the scheduling step checked it, so a firefighter who picked a player up during the 3 s delay was still teleported — dragging the carried player along through the per-frame carry force.
+- **Fixed** MilesSoul 【Cursed Soul】: a client MilesSoul could start with **15** curse instead of the intended **20** (15 from 【Cursed Soul】 plus 5 from 【Soul Hindrance】 on entering the level).
+    - Root cause: the initial 15 and the per-level 5 were sent through **different channels**. The initial value used an absolute write with idempotent corrections; the +5 used a relative increment. A relative increment can be silently dropped by the vanilla `AddStatus` guards while a client is still initialising, and the correction loop only knew about the 15 — so it could also overwrite the +5 back to 15. In addition, the protection baseline was recorded from a stale host-side copy of a remote client (remote status changes made through the RPC path are not pushed back to the host by vanilla), producing baseline values like 17.5.
+    - Fix: the initial curse and this level's +5 are now **merged into one absolute, idempotent write** (`15 + 5 = 20`), which the existing correction loop re-asserts. 【Soul Hindrance】 now records the **intended** baseline (`baseline + 5`) instead of reading back a possibly half-synced value, and the same-frame initial grant is skipped by the new-level handler so it can never become 25.
+- **Improved** **Performance / bandwidth** (no gameplay change):
+    - The class panel text is cached by a `(ViewID, class, nickname)` signature and the TMP panel update is version-gated — holding the panel key no longer rebuilds every line (and re-lays out TMP) every frame.
+    - Class name / keyword / intro tables are no longer re-sent with every 2 s snapshot; they are sent only when the set of classes changes or every 30 s (late joiners still receive them). This removes roughly 4-5 kbit/s of redundant reliable traffic per client in a full room.
+    - The carry-state watchdog reads the vanilla `CharacterCarrying.character` field directly instead of calling `GetComponent<Character>()` for **every character every frame**.
+    - The overhead name prefix caches its per-name state component (previously `GetComponent` for every player every frame).
+    - MilesSoul curse protection now throttles repeat restores (2.5 s fast retries, then every 20 s) and logs sparsely; a stale host-side copy previously caused two RPCs **and** one log line per second, indefinitely.
+    - Observed in the tested session: a third-party mod (`AlwaysDisplayPlayerName`) emitted ~79,000 error lines, which is a major external stutter source; this mod emitted ~3,700 log lines in total.
+
+### 中文
+
+- **新增** **职业介绍板块**：按键显示职业分配面板时（默认 Tab），面板下方会额外显示**本人职业**的关键词与简介，玩家不必翻阅职业文档就能快速了解自己的职业。文本随游戏语言（中文 / 英文）。主机屏幕、主模组客机模式、以及可选的客机显示附属模组均支持；只显示本机玩家自己的职业，不列出全部职业。
+- **新增** **职业介绍兼容**：主机现在额外广播职业**关键词**与**简介**表（Photon 自定义事件 197，Kind 4 / 5；仅在「职业集合变化」或每 30 秒发送一次）。当主模组新增职业、而客机上的附属模组 / 旧版本地文案表还不认识该职业时，会**退回使用主机广播的文本** —— 因此**主模组更新后不必同步更新附属模组**也能看到新职业的介绍。已知职业仍优先使用本地文案，各客户端保持自己的语言。
+- **修复** 救火队员【火线救援】：被救火队员背起的玩家苏醒后仍"吸附"在背人者身上、无法攀爬；死亡复活后再次吸附。
+    - 根因：原版 `CharacterCarrying.Update` 的自动放下**只在背人者的拥有者客户端执行**，而 `RPCA_Die` / `ReviveCharacter` / `RPCA_ReviveAtPosition` 都不会清理 `isCarried` / `carrier`。一旦那一次 `RPCA_Drop` 没有执行，被背者就永久保留 `carrier`；`CharacterCarrying.FixedUpdate` 随后每帧朝背人者施加 500 的力（表现为吸附、无法攀爬），且死亡复活沿用同一个 Character 对象，状态不会清零。本模组的【火线救援】恰好让该时机变得高频：先把救火队员传送到昏迷者身上，再由【温暖臂膀】在背上治疗促使受害者在背上苏醒 —— 苏醒正是原版唯一会触发放下的时刻。
+    - 现在改由主机在"本该放下却没放下"时代为广播原版 `RPCA_Drop`（`RpcTarget.All`），因此未安装任何模组的玩家也能被修复。
+    - 1.0.6 进一步加固：被背者侧的清理现在对**主机自己的角色**同样执行（此前完全跳过本地角色，导致主机被客机背起时同样可能永久吸附）；并改为"异常状态持续 0.5 秒"才动手，避免与正在进行的 `RPCA_StartCarry` / `RPCA_PassOut`（由不同客户端发送，跨发送端无顺序保证）抢跑、误拆正常的背人。
+- **修复** 救火队员【火线救援】：在"自身背着玩家时无法触发"这一限制之外，执行阶段也会再检查一次。此前只有登记阶段检查，若救火队员在 3 秒延迟内背起了别的玩家，仍会被强行传送 —— 被背者会因每帧的背人追力被一起拖走。
+- **修复** 残魂【受诅残魂】：客机的残魂开局诅咒可能是 **15** 而不是应有的 **20**（【受诅残魂】15 + 【众魂阻挠】本层 +5）。
+    - 根因：初始 15 与每层 +5 走了**两条不同通道** —— 初始值用「绝对赋值 + 幂等校正」，+5 用「相对增量」。相对增量在客机尚未初始化完成时会被原版 `AddStatus` 的守卫静默丢弃；而校正循环只知道目标 15，甚至会把已经加上去的 +5 覆盖回 15。另外，诅咒保护基准是**从主机侧读到的远端副本**记录的（原版在 RPC 路径下不会把主机下发的状态变化回推给主机），会记录出 17.5 这类"只加了一半"的值。
+    - 修复：初始诅咒与本层 +5 现在**合并为一次绝对、幂等的写入**（15 + 5 = 20），由既有校正循环反复校正；【众魂阻挠】改为直接记录**期望基准**（基准 + 5），不再读回可能只同步了一半的值；开局同帧的初始发放会登记并让新关卡处理跳过，因此也不会变成 25。
+- **优化** **性能 / 带宽**（不改变任何职业效果）：
+    - 职业分配面板文本按 `(ViewID, 职业, 昵称)` 签名缓存，TMP 面板按版本号跳过重排 —— 按住面板键时不再每帧重建每一行。
+    - 职业名 / 关键词 / 简介表不再随每 2 秒快照重发，只在职业集合变化或每 30 秒补发一次（中途加入者仍能收到）；满员房约占去掉每客户端 4~5 kbit/s 的冗余可靠流量。
+    - 背人状态自愈补丁改为直接读取原版 `CharacterCarrying.character` 字段，不再对**每帧每个角色**调用 `GetComponent<Character>()`。
+    - 头顶职业前缀的状态组件改为缓存（此前每帧每个玩家都调用一次 `GetComponent`）。
+    - 残魂诅咒保护改为节流重试（前几次 2.5 秒、之后 20 秒）并稀疏打日志；此前主机副本滞后会导致**每秒 2 条 RPC + 1 条日志**且无限持续。
+    - 本次实测日志中：第三方模组 `AlwaysDisplayPlayerName` 产生了约 **79000** 条 Error 行，是明显的卡顿外部来源；本模组自身日志总量约 **3700** 行。

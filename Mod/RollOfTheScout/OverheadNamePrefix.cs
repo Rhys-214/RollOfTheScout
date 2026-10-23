@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace RollOfTheScout
@@ -57,6 +58,27 @@ namespace RollOfTheScout
         private const float ColorRetrySeconds = 0.5f;
 
         /// <summary>
+        /// 头顶名称对象 → 状态组件的缓存。
+        /// 本方法由「头顶名称刷新补丁」**每帧、每个玩家**调用；若每次都走 <c>GetComponent</c>（原生调用），
+        /// 12 人房 × 60 帧 ≈ 每秒 720 次，是本模组在多人局里最主要的每帧固定开销之一。
+        /// </summary>
+        private static readonly Dictionary<PlayerName, OverheadNameState> States =
+            new Dictionary<PlayerName, OverheadNameState>();
+
+        /// <summary>取（或补挂）该名称对象的状态组件；缓存命中时只有一次字典查找。</summary>
+        private static OverheadNameState GetState(PlayerName pn)
+        {
+            if (States.TryGetValue(pn, out var st) && st != null) return st;
+
+            st = pn.GetComponent<OverheadNameState>();
+            if (st == null) st = pn.gameObject.AddComponent<OverheadNameState>();
+
+            if (States.Count > 128) States.Clear();   // UI 对象重建过多时防止缓存无限增长
+            States[pn] = st;
+            return st;
+        }
+
+        /// <summary>
         /// 对某个头顶名称对象应用（或恢复）职业前缀。
         /// </summary>
         /// <param name="pn">头顶名称 UI 对象（<c>UIPlayerNames.playerNameText[index]</c>）。</param>
@@ -66,8 +88,7 @@ namespace RollOfTheScout
         {
             if (pn == null || ch == null) return;
 
-            var st = pn.GetComponent<OverheadNameState>();
-            if (st == null) st = pn.gameObject.AddComponent<OverheadNameState>();
+            var st = GetState(pn);
 
             string original = ch.characterName;
             if (!string.Equals(st.OriginalName, original))

@@ -51,6 +51,21 @@ namespace RollOfTheScout
         /// </summary>
         public const byte KindClassNames = 3;
 
+        /// <summary>
+        /// Kind：职业「关键词」文本表（<c>"code=关键词;…"</c>），与 <see cref="KindClassNames"/> 同格式。
+        ///
+        /// 用途：让**旧版附属模组 / 旧版主模组客机模式**也能显示主模组后来新增职业的介绍
+        /// （客机本地文案表里没有该职业时，退回主机广播来的文本）。
+        /// 静态文本，只在「职业集合变化」或每 <see cref="ClassTextResendSeconds"/> 秒补发一次。
+        /// </summary>
+        public const byte KindClassKeywords = 4;
+
+        /// <summary>Kind：职业「简介」文本表（<c>"code=简介;…"</c>），用途同 <see cref="KindClassKeywords"/>。</summary>
+        public const byte KindClassIntro = 5;
+
+        /// <summary>关键词 / 简介文本的保底重发间隔（秒）。仅为让中途加入的客机也能收到；文本是静态的，无需频繁发送。</summary>
+        public const float ClassTextResendSeconds = 30f;
+
         /// <summary>职业快照的保底重发间隔（秒）：保证中途加入的客机也能尽快收到，且实时跟随职业变动。</summary>
         public const float SnapshotIntervalSeconds = 2f;
 
@@ -88,11 +103,41 @@ namespace RollOfTheScout
             Send(KindClassNames, sb.ToString());
         }
 
-        /// <summary>把分隔符替换掉，避免职业名里的 <c>;</c> / <c>=</c> 破坏解析（职业名均为固定常量，实际不会命中）。</summary>
+        /// <summary>广播「职业数值 → 关键词」文本表（旧版客机据此显示新职业的介绍）。</summary>
+        public static void BroadcastClassKeywords(IList<KeyValuePair<int, string>> codeToKeywords)
+        {
+            SendTextMap(KindClassKeywords, codeToKeywords);
+        }
+
+        /// <summary>广播「职业数值 → 简介」文本表（旧版客机据此显示新职业的介绍）。</summary>
+        public static void BroadcastClassIntro(IList<KeyValuePair<int, string>> codeToIntro)
+        {
+            SendTextMap(KindClassIntro, codeToIntro);
+        }
+
+        /// <summary>把 <c>"code=文本;…"</c> 形式的文本表发出。</summary>
+        private static void SendTextMap(byte kind, IList<KeyValuePair<int, string>> pairs)
+        {
+            if (!ShouldBroadcast()) return;
+            if (pairs == null || pairs.Count == 0) return;
+
+            var sb = new StringBuilder();
+            for (int i = 0; i < pairs.Count; i++)
+            {
+                if (i > 0) sb.Append(';');
+                sb.Append(pairs[i].Key).Append('=').Append(Sanitize(pairs[i].Value));
+            }
+            Send(kind, sb.ToString());
+        }
+
+        /// <summary>
+        /// 把分隔符替换掉，避免文本里的 <c>;</c> / <c>=</c> / 换行破坏解析
+        /// （职业名 / 关键词 / 简介均为固定常量，实际不会命中）。
+        /// </summary>
         private static string Sanitize(string name)
         {
             if (string.IsNullOrEmpty(name)) return string.Empty;
-            return name.Replace(';', '_').Replace('=', '_');
+            return name.Replace(';', '_').Replace('=', '_').Replace('\n', ' ').Replace('\r', ' ');
         }
 
         /// <summary>广播一条职业效果提示（与主机左上角 Toast 文本一致）。</summary>

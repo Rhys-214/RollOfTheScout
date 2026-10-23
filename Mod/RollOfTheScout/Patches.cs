@@ -1848,4 +1848,164 @@ namespace RollOfTheScout.Patches
             }
         }
     }
+
+    /// <summary>
+    /// 背人状态自愈（主机侧兜底）：修复「被背起后永远吸附在背人者身上、死亡复活也不解除」。
+    ///
+    /// 原版背人的解除契约（反编译 CharacterCarrying）：
+    ///   · <c>Update()</c> 中的自动放下**只由背人者的拥有者客户端执行**
+    ///     （条件末尾带 <c>character.refs.view.IsMine</c>）：当被背者 <c>dead</c> / <c>!fullyPassedOut</c>、
+    ///     或背人者 <c>fullyPassedOut</c> / <c>dead</c> 时调用 <c>Drop()</c> → 广播 <c>RPCA_Drop</c>。
+    ///   · <c>RPCA_Die</c>、<c>ReviveCharacter</c>、<c>RPCA_ReviveAtPosition</c> 都**不会**清理
+    ///     <c>isCarried</c> / <c>carrier</c>；<c>CarrierGone()</c> 也只恢复碰撞、不落标记。
+    /// 因此只要那一次「放下」没有真正执行，被背者的 <c>carrier</c> 就永久残留：
+    /// <c>CharacterCarrying.FixedUpdate</c> 每帧朝 <c>carrier.refs.carryPosRef</c> 施加 500 的力，
+    /// 表现为「粘在背人者身上、无法攀爬」，且死亡→复活后仍然如此（同一 Character 对象）。
+    ///
+    /// 本模组的【火线救援】恰好最容易踩中这时机：把救火队员**直接传送到昏迷者身上**
+    /// （<c>WarpPlayerRPC</c>）后立刻背起，再由【温暖臂膀】在背上为被背者治疗、促使其在背上苏醒 ——
+    /// 苏醒那一刻正是原版唯一解除契约的触发点。
+    ///
+    /// 本补丁让**主机**在「本该放下却没放下」时代为广播原版 <c>RPCA_Drop</c>（无需客机安装）：
+    ///   ① 背人者仍记着被背者，但被背者已死亡 / 已苏醒，或背人者已死亡（仅对主机不拥有的角色执行，
+    ///      拥有者客户端自己会正常放下）；
+    ///   ② 被背者残留 <c>isCarried</c> / <c>carrier</c>（背人者掉线、自己已苏醒或已死亡）——
+    ///      **这一条对主机自己的角色同样执行**：原版只由背人者广播放下，被背者自己从不清理，
+    ///      因此主机被客机背起时同样可能永久吸附。
+    /// 异常状态需「持续 0.5 秒」才动手（避免与正常进行的背人抢跑）；RPC 若再丢失会按 0.5 秒重试。
+    /// </summary>
+    public static class CarryReleaseWatchdogPatch
+    {
+        /// <summary>「异常状态」需要持续多久才代为放下（秒）。</summary>
+        private const float ConfirmSeconds = 0.5f;
+
+        /// <summary>角色 PhotonView.ViewID → 首次观测到「异常状态」的时刻（Time.time）。</summary>
+        private static readonly System.Collections.Generic.Dictionary<int, float> SinceSeen =
+            new System.Collections.Generic.Dictionary<int, float>();
+
+        // 原版 CharacterCarrying 的私有字段 character（在 Start 里赋值）。
+        // 直接按字段读取，避免**每帧每个角色**都调用一次 GetComponent（原生调用，是这条每帧补丁里最贵的部分）。
+        private static HarmonyLib.AccessTools.FieldRef<CharacterCarrying, Character> _characterRef;
+        private static bool _characterRefResolved;
+
+        /// <summary>取 CharacterCarrying 对应的 Character（字段直读；解析失败才退回 GetComponent）。</summary>
+        private static Character GetCharacter(CharacterCarrying carrying)
+        {
+            if (!_characterRefResolved)
+            {
+                _characterRefResolved = true;   // 只尝试一次：失败则永久使用 GetComponent 兜底
+                try
+                {
+                    _characterRef = HarmonyLib.AccessTools.FieldRefAccess<CharacterCarrying, Character>("character");
+                }
+                catch
+                {
+                    _characterRef = null;
+                }
+            }
+
+            if (_characterRef != null)
+            {
+                try
+                {
+                    var cached = _characterRef(carrying);
+                    if (cached != null) return cached;
+                }
+                catch { /* 字段读取异常：走兜底 */ }
+            }
+            return carrying.GetComponent<Character>();
+        }
+
+        /// <summary>对应 CharacterCarrying.Update()（原版为私有方法，每帧在每个角色上执行）。</summary>
+        public static void Postfix(CharacterCarrying __instance)
+        {
+            try
+            {
+                if (!PhotonNetwork.IsMasterClient) return;
+                if (__instance == null) return;
+
+                var character = GetCharacter(__instance);
+                if (character == null || character.data == null) return;
+
+                var view = character.photonView;
+                if (view == null) return;
+
+                var carried = character.data.carriedPlayer;
+                var carrier = character.data.carrier;
+                bool carriedFlag = character.data.isCarried;
+
+                // ---- ① 背人者仍记着被背者，但这次早该放下了 ----
+                // 拥有者客户端会执行原版放下判定（Update 条件末尾带 refs.view.IsMine），
+                // 因此只对「主机不拥有的角色」介入，避免与拥有者抢发同一份 RPC。
+                bool carrierStale = !view.IsMine
+                    && carried != null && carried.data != null && carried.photonView != null
+                    && (carried.data.dead || !carried.data.fullyPassedOut
+                        || character.data.fullyPassedOut || character.data.dead);
+
+                // ---- ② 自己是被背的一方：早该解除，但「被背」标记仍挂着 ----
+                // 原版只有「背人者的客户端」会广播 RPCA_Drop，被背者自己永远不会清理，
+                // 所以这一条对「主机自己的角色」也必须执行 —— 否则主机被客机背起、
+                // 而那次 RPCA_Drop 丢失时，主机自己也会永久吸附（实测日志里主机就被背起过）。
+                // 三种情形：背人者已不存在（掉线 / 角色销毁，原版 CarrierGone 只恢复碰撞）、
+                // 自己已死亡、自己已苏醒。
+                //
+                // 自己正背着别人时不能走这条通道：RPCA_Drop 会把自己背的人一起放下。
+                bool victimStale = carried == null
+                    && (carriedFlag || carrier != null)
+                    && (carrier == null || character.data.dead || !character.data.fullyPassedOut);
+
+                if (!carrierStale && !victimStale)
+                {
+                    // 状态正常：清掉计时，下次异常重新计时（无记录时跳过字典探测）
+                    if (SinceSeen.Count > 0) SinceSeen.Remove(view.ViewID);
+                    return;
+                }
+
+                // 异常必须「持续」一段时间才动手：RPCA_PassOut / RPCA_StartCarry 来自不同发送端，
+                // RPC 到达顺序不保证，单帧内的状态不一致可能只是正常的中间态，
+                // 立刻代为放下会误伤正在正常进行的背人。
+                float now = Time.time;
+                if (!SinceSeen.TryGetValue(view.ViewID, out float since))
+                {
+                    SinceSeen[view.ViewID] = now;
+                    return;
+                }
+                if (now - since < ConfirmSeconds) return;
+                SinceSeen[view.ViewID] = now;   // 确认后重新计时：RPC 若再丢失，按 0.5s 继续重试
+
+                if (carrierStale)
+                {
+                    string reason = carried.data.dead ? "被背者已死亡"
+                        : !carried.data.fullyPassedOut ? "被背者已苏醒"
+                        : character.data.dead ? "背人者已死亡"
+                        : "背人者已昏迷";
+
+                    // 与拥有者客户端同一条通道：广播原版 RPCA_Drop（RpcTarget.All）
+                    view.RPC("RPCA_Drop", RpcTarget.All, carried.photonView);
+                    Plugin.Log.LogInfo(
+                        $"[RollOfTheScout] 背人状态自愈：{NameOf(character)} 早该放下 {NameOf(carried)}"
+                        + $"（{reason}），主机代为广播放下。");
+                    return;
+                }
+
+                // 以自己的 PhotonView 为目标广播 RPCA_Drop：该 RPC 内部以「接收端角色」为 component，
+                // 因此会把自身的 isCarried / carrier 一并清掉（上一条已确保自身没有背着别人）。
+                view.RPC("RPCA_Drop", RpcTarget.All, view);
+                Plugin.Log.LogInfo(
+                    $"[RollOfTheScout] 背人状态自愈：{NameOf(character)} 仍残留「被背」标记"
+                    + $"（{(carrier == null ? "背人者已不存在" : character.data.dead ? "自己已死亡" : "自己已苏醒")}），"
+                    + "主机代为清除。");
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogError($"[RollOfTheScout] 背人状态自愈异常：{e.Message}");
+            }
+        }
+
+        private static string NameOf(Character character)
+        {
+            if (character == null) return "(null)";
+            return string.IsNullOrEmpty(character.characterName) ? "(未命名)" : character.characterName;
+        }
+    }
 }

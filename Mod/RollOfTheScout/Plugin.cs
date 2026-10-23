@@ -59,6 +59,14 @@ namespace RollOfTheScout
                 prefix: AccessTools.Method(typeof(ReviveCharacterPatch), nameof(ReviveCharacterPatch.Prefix)),
                 postfix: AccessTools.Method(typeof(ReviveCharacterPatch), nameof(ReviveCharacterPatch.Postfix)));
 
+            // 背人状态自愈（主机侧兜底）：修复「被背起后苏醒/死亡仍吸附在背人者身上」。
+            // 原版 CharacterCarrying.Update 的自动放下只由**背人者的拥有者客户端**执行
+            // （条件带 refs.view.IsMine），且死亡 / 复活都不会清理 isCarried / carrier；
+            // 这里让主机在那一步没执行时代为广播原版 RPCA_Drop（客机零安装也能被修复）。
+            var carryingUpdate = AccessTools.Method(typeof(CharacterCarrying), "Update");
+            TryPatch("CharacterCarrying.Update (背人状态自愈)", carryingUpdate,
+                postfix: AccessTools.Method(typeof(CarryReleaseWatchdogPatch), nameof(CarryReleaseWatchdogPatch.Postfix)));
+
             // 刺客·刺杀：获得物品按概率替换为仪式匕首。
             // 拦截 Player.AddItem —— 物品真正进入玩家背包/物品栏的唯一漏斗；
             // 拾取时由主机执行（Item.RequestPickup 内部调用），只在主机生效（见 AssassinPickupPatch）。

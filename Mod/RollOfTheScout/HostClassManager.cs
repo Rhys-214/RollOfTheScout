@@ -526,6 +526,12 @@ namespace RollOfTheScout
         // 骷髅形态只在死亡那一刻被清除，因此用**上一轮**的观测值即可可靠判定。
         private readonly Dictionary<string, bool> _wasSkeleton = new Dictionary<string, bool>();
 
+        // 死灵法师·亡灵·复活：每名玩家**首次「复活为人类」**的豁免标记（硬编码、无配置项）。
+        // 只对「复活为人类 → 死灵法师 +诅咒」这一路生效；复活为骷髅的减诅咒不受影响。
+        // 目的：中途加入者以死亡灵魂加入，其复活到位就是本局首次人类复活 —— 直接豁免，
+        // 避免这类「非真正阵亡」的复活让死灵法师凭空 +5 诅咒。
+        private readonly HashSet<string> _necromancerFirstHumanRevive = new HashSet<string>();
+
         // 救火队员·火线救援：一次「延迟救援」任务 —— 目标昏迷玩家的稳定标识 + 触发时刻。
         private struct RescueTask
         {
@@ -619,6 +625,25 @@ namespace RollOfTheScout
 
         // 【受诅残魂】诅咒保护轮询计时器。
         private float _milesCurseTimer;
+
+        // 【受诅残魂】保护「强制恢复」的写入节流：玩家稳定标识 → 下次允许再次写入的时刻 / 已连续写入次数。
+        // 主机读到的是**远端角色同步回来的副本**；主机下发的状态变化不会自动回传（原版 fromRPC 路径不 PushStatuses），
+        // 因此「读到的值偏低」可能只是副本滞后。若不做节流，会每秒重复发送同一笔绝对写入（双 RPC + 日志刷屏）。
+        private readonly Dictionary<string, float> _milesCurseFixNext = new Dictionary<string, float>();
+        private readonly Dictionary<string, int> _milesCurseFixTries = new Dictionary<string, int>();
+
+        /// <summary>【受诅残魂】保护恢复的前几次重试间隔（秒）。</summary>
+        private const float MilesCurseFastRetrySeconds = 2.5f;
+
+        /// <summary>【受诅残魂】保护恢复在前几次之后退化为慢速重试的间隔（秒）。</summary>
+        private const float MilesCurseSlowRetrySeconds = 20f;
+
+        /// <summary>【受诅残魂】保护恢复的前几次快速重试次数。</summary>
+        private const int MilesCurseFastRetryCount = 3;
+
+        // 【众魂阻挠】本帧「初始发放已包含本层 +5」的玩家标识：
+        // 初始诅咒与每层诅咒合并成一次绝对赋值后，本帧稍后的 OnMilesSoulNewLevel 不能再加一次（否则 20 变 25）。
+        private readonly HashSet<string> _milesLevelBonusIncluded = new HashSet<string>();
 
         // 【封印之力】本局已「第一次拾取」过的童军宝石预制体名（用于 -诅咒 与【童军的力量】判定）。
         private readonly HashSet<string> _milesGemPicked = new HashSet<string>();
@@ -1089,6 +1114,20 @@ namespace RollOfTheScout
         private GUIStyle _classListStyle;
         private GUIStyle _classListTitleStyle;
 
+        // ---- 「职业介绍」板块（本人职业的关键词 / 简介，跟随职业分配面板一起显示）----
+        private GUIStyle _classIntroStyle;
+        private GUIStyle _classIntroTitleStyle;
+        private int _classIntroCacheCode = -1;
+        private string _classIntroCacheTitle;
+        private List<string> _classIntroCacheLines;
+
+        /// <summary>
+        /// 职业介绍文本的「内容版本号」：主机广播来新文案 / 换局时自增。
+        /// 面板打开时每帧调用 <see cref="TryBuildClassIntro"/>，版本号不变即直接复用缓存（含标题与两行文本）。
+        /// </summary>
+        private int _classIntroVersion = 1;
+        private int _classIntroCacheVersion;
+
         // ---- 「职业显示」按键 / 模式的解析缓存（每帧读取输入时避免重复解析）----
         // 配置字符串不变时直接复用上次的 KeyCode 与模式分类；字符串变化（用户改 cfg 后重载）才重算。
         private string _classListKeyRaw;
@@ -1105,11 +1144,26 @@ namespace RollOfTheScout
         private float _nextDisplaySyncTime;
         private bool _displaySyncDirty;
 
+        // ---- 职业关键词 / 简介文本的广播节流 ----
+        // 文本是静态的（每个职业码一份），只有「出现新职业」或每 ClassDisplayNet.ClassTextResendSeconds 秒
+        // 才全量补发一次；否则每 2 秒随快照重发会白占带宽（尤其简介较长）。
+        private int _lastClassTextHash;
+        private float _nextClassTextTime;
+
+        // ---- 「职业分配」面板文本缓存（按住显示时每帧读取，避免每帧重建字符串）----
+        // 签名由 (角色 ViewID, 职业码, 昵称哈希) 组成：只有真正变化时才重建各行文本。
+        private int _classListSignature = int.MinValue;
+        private List<string> _classListLinesCache;
+
         // ---- 客机接收模式（本机非主机）：接收主机广播的职业分配与提示 ----
         // 仅在「本机安装本模组、但不是 MasterClient」时使用；不影响主机、也不影响未装模组的客机。
         private readonly List<KeyValuePair<int, int>> _remoteClasses = new List<KeyValuePair<int, int>>();
         private readonly Dictionary<int, int> _remoteClassMap = new Dictionary<int, int>();
         private readonly Dictionary<int, string> _remoteClassNames = new Dictionary<int, string>();
+        // 主机广播来的「新职业」关键词 / 简介：本机文案表没有该职业时作为兜底（保证主模组新增职业后，
+        // 旧版本地仍能显示介绍，不必同步更新）。
+        private readonly Dictionary<int, string> _remoteClassKeywords = new Dictionary<int, string>();
+        private readonly Dictionary<int, string> _remoteClassIntro = new Dictionary<int, string>();
         private bool _hasRemoteSnapshot;
 
         private void Awake()
@@ -1980,6 +2034,7 @@ namespace RollOfTheScout
             _pacifistKickCooldownUntil.Clear();
             _wasDowned.Clear();
             _wasSkeleton.Clear();
+            _necromancerFirstHumanRevive.Clear();
             _rescuePending.Clear();
             _rescueAwaitCarry.Clear();
             _rescueCooldownUntil.Clear();
@@ -1994,6 +2049,9 @@ namespace RollOfTheScout
             _bandTransferStreak.Clear();
             _milesCurseRecord.Clear();
             _milesCurseAllowUntil.Clear();
+            _milesCurseFixNext.Clear();
+            _milesCurseFixTries.Clear();
+            _milesLevelBonusIncluded.Clear();
             _milesCurseTimer = 0f;
             _milesGemPicked.Clear();
             _milesGemUseCount.Clear();
@@ -2051,9 +2109,16 @@ namespace RollOfTheScout
             // 否则回到机场（大厅）后仍会显示上一局的职业分配（该清空不能受下方 _inRun 早退影响）。
             _remoteClasses.Clear();
             _remoteClassMap.Clear();
+            _remoteClassKeywords.Clear();
+            _remoteClassIntro.Clear();
             _hasRemoteSnapshot = false;
             _displaySyncDirty = false;
             _nextDisplaySyncTime = 0f;
+            _lastClassTextHash = 0;
+            _nextClassTextTime = 0f;
+            InvalidateClassIntroCache();
+            _classListSignature = int.MinValue;
+            _classListLinesCache = null;
 
             if (!_inRun) return;
             _inRun = false;
@@ -2104,6 +2169,7 @@ namespace RollOfTheScout
             _pacifistKickCooldownUntil.Clear();
             _wasDowned.Clear();
             _wasSkeleton.Clear();
+            _necromancerFirstHumanRevive.Clear();
             _rescuePending.Clear();
             _rescueAwaitCarry.Clear();
             _rescueCooldownUntil.Clear();
@@ -2118,6 +2184,9 @@ namespace RollOfTheScout
             _bandTransferStreak.Clear();
             _milesCurseRecord.Clear();
             _milesCurseAllowUntil.Clear();
+            _milesCurseFixNext.Clear();
+            _milesCurseFixTries.Clear();
+            _milesLevelBonusIncluded.Clear();
             _milesCurseTimer = 0f;
             _milesGemPicked.Clear();
             _milesGemUseCount.Clear();
@@ -3374,6 +3443,17 @@ namespace RollOfTheScout
                     var target = FindCharacterById(characters, task.TargetId);
                     if (target == null || !IsDowned(target)) { (done ??= new List<string>()).Add(id); continue; }
 
+                    // 登记之后、到点之前若救火队员已经背起了别的玩家（腾不出手），放弃本次救援：
+                    // 此时再「传送 + 等待背起」没有意义，且把正在背人的角色强行传送会打乱
+                    // 原版背人状态（被背者由每帧追力维持，传送前后位置差会被瞬间拉扯）。
+                    if (firefighter.data != null && firefighter.data.carriedPlayer != null)
+                    {
+                        (done ??= new List<string>()).Add(id);
+                        Plugin.Log.LogInfo(
+                            $"[RollOfTheScout] 火线救援：{Nick(firefighter)} 正背着玩家，放弃对 {Nick(target)} 的延迟救援（不再传送）。");
+                        continue;
+                    }
+
                     string item = ModConfig.Firefighter.RescueInvincibleItem.Value;
                     if (!string.IsNullOrEmpty(item)) FeedTransientItem(firefighter, item, "火线救援");
                     firefighter.photonView.RPC("WarpPlayerRPC", RpcTarget.All, target.Center, false);
@@ -3640,24 +3720,30 @@ namespace RollOfTheScout
 
                 case ClassType.MilesSoul:
                 {
-                    // 负面·受诅残魂：开局自带初始诅咒，并立即记录一次「最新诅咒值」（诅咒保护的基准）。
+                    // 负面·受诅残魂：开局自带初始诅咒（15），并立即记录「最新诅咒值」（诅咒保护的基准）。
+                    //
+                    // 【众魂阻挠】的「本层 +5」**合并进这一次绝对赋值**：
+                    //   · 相对增量（ApplyStatus）在客机尚未就绪时会被原版 AddStatus 的守卫静默丢弃，
+                    //     而初始 15 走的是绝对赋值 + 校正，能落地 —— 两者分开下发时就会出现「只有 15、没有 20」；
+                    //   · 绝对赋值 + <see cref="TickInitialCurseGrant"/> 的幂等校正天然能自愈，且少一组 RPC。
+                    // 开局就分配为残魂的玩家：本帧稍后的 OnMilesSoulNewLevel 还会对全体残魂 +5，
+                    // 这里把 id 登记进 `_milesLevelBonusIncluded` 让那边跳过，避免 20 变成 25。
                     float curse = ModConfig.MilesSoul.InitCurse.Value;
-                    GrantInitialCurse(character, curse);
-                    RecordMilesCurse(character, curse);
-
-                    // 补上「本层」的 +5：转职 / 中途加入成为残魂者不会经过 `_pendingNewLevel` 处理块
-                    //（该块只在「进入新关卡」那一帧结算，彼时他们还不是残魂）→ 否则会少一次每层诅咒。
-                    // 开局就分配为残魂的玩家，本帧 `_pendingNewLevel` 为真，由 OnMilesSoulNewLevel 统一结算，故此处跳过。
                     float perLevel = ModConfig.MilesSoul.CursePerLevel.Value;
-                    if (!_pendingNewLevel && perLevel > 0f && !MilesNoCurseLevel())
-                    {
-                        HostApi.ApplyStatus(character, CharacterAfflictions.STATUSTYPE.Curse, perLevel);
-                        RecordMilesCurse(character);
-                        Plugin.Log.LogInfo(
-                            $"[RollOfTheScout] 众魂阻挠：{Nick(character)} 转职 / 中途加入成为残魂，补发本层诅咒 +{perLevel * 100f:0.#}。");
-                    }
+                    bool addLevelBonus = perLevel > 0f && !MilesNoCurseLevel();
+                    float total = addLevelBonus ? curse + perLevel : curse;
 
-                    Plugin.Log.LogInfo($"[RollOfTheScout] 受诅残魂：{Nick(character)} 诅咒+{curse * 100f:0.#}（已记录为保护基准）");
+                    GrantInitialCurse(character, total);
+                    RecordMilesCurse(character, total);
+
+                    string milesId = _ledger.IdOf(character);
+                    if (addLevelBonus && _pendingNewLevel && !string.IsNullOrEmpty(milesId))
+                        _milesLevelBonusIncluded.Add(milesId);
+
+                    Plugin.Log.LogInfo(
+                        $"[RollOfTheScout] 受诅残魂：{Nick(character)} 诅咒+{total * 100f:0.#}"
+                        + (addLevelBonus ? $"（含本层众魂阻挠 +{perLevel * 100f:0.#}）" : string.Empty)
+                        + "（已记录为保护基准）");
                     break;
                 }
             }
@@ -6093,7 +6179,30 @@ namespace RollOfTheScout
                         // 亡灵·复活：复活为「骷髅」还是「人类」以 data.isSkeleton 为准。
                         // 原版 Skelleton.Interact_CastFinished 先 SetSkeleton(true) 再广播复活，
                         // 两条 RPC 同属一个 PhotonView 且有序，主机此处置信该值即可。
-                        if (anyNecromancer) ApplyNecromancerRevive(IsSkeleton(character));
+                        bool revivedAsSkeleton = IsSkeleton(character);
+
+                        // 隐藏限制（硬编码、无配置项）：每名玩家**首次复活为人类**不计入【亡灵】的 +诅咒。
+                        // 中途加入者以灵魂状态加入，其复活到位即首次人类复活 —— 在此豁免即可避免
+                        // 死灵法师因「新玩家进场」凭空 +5 诅咒。复活为骷髅的减诅咒仍照常结算。
+                        bool skipHumanReviveCurse = false;
+                        if (!revivedAsSkeleton)
+                        {
+                            skipHumanReviveCurse = _necromancerFirstHumanRevive.Add(actor);
+                        }
+
+                        if (anyNecromancer)
+                        {
+                            if (skipHumanReviveCurse)
+                            {
+                                Plugin.Log.LogInfo(
+                                    $"[RollOfTheScout] 亡灵：{Nick(character)} 本局首次复活为人类，不计入死灵法师诅咒增加。");
+                            }
+                            else
+                            {
+                                ApplyNecromancerRevive(revivedAsSkeleton);
+                            }
+                        }
+
                         // 「复活继承」会按死亡记录恢复诅咒 / 石化；中途加入者的首次复活由
                         // UpdateJoinSoulSettle 负责（他们因此前一直处于 _joinSouls，未产生死亡记录、也未提前发放）。
                         RestoreOnRevive(character);
@@ -7921,6 +8030,15 @@ namespace RollOfTheScout
             string id = _ledger.IdOf(character);
             if (string.IsNullOrEmpty(id)) return;
             _milesCurseRecord[id] = Mathf.Clamp01(value);
+            ResetMilesCurseFixState(id);   // 目标值变了：允许保护逻辑重新快速尝试
+        }
+
+        /// <summary>清除某玩家的「保护恢复」节流状态（目标值变化 / 换局时调用）。</summary>
+        private void ResetMilesCurseFixState(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return;
+            _milesCurseFixNext.Remove(id);
+            _milesCurseFixTries.Remove(id);
         }
 
         /// <summary>记录一次「最新诅咒值」（读取当前主机可见值）。</summary>
@@ -7948,6 +8066,7 @@ namespace RollOfTheScout
 
             _milesCurseAllowUntil.TryGetValue(id, out float until);
             _milesCurseAllowUntil[id] = Mathf.Max(until, Time.time + 3f);
+            ResetMilesCurseFixState(id);   // 基准下调：保护逻辑的目标已变，重新允许快速尝试
 
             Plugin.Log.LogInfo($"[RollOfTheScout] {reason}：{Nick(character)} 诅咒-{amount * 100f:0.#}（自身职业效果，保护基准同步下调）。");
         }
@@ -7961,18 +8080,39 @@ namespace RollOfTheScout
             foreach (var c in characters)
             {
                 if (_ledger.GetClass(c) != ClassType.MilesSoul) continue;
+                string id = _ledger.IdOf(c);
+
+                // 本帧刚做过「初始发放」且已经把本层 +5 合并进去 → 这里不能再加一次（否则 20 变 25）。
+                if (!string.IsNullOrEmpty(id) && _milesLevelBonusIncluded.Remove(id)) continue;
 
                 if (noCurse)
                 {
+                    RecordMilesCurse(c);   // 本层不加：基准跟随当前值
                     Plugin.Log.LogInfo($"[RollOfTheScout] 众魂阻挠：{Nick(c)} 已进入顶峰 / 天底，本层不再增加诅咒。");
+                    continue;
                 }
-                else if (perLevel > 0f)
+                if (perLevel <= 0f)
                 {
-                    HostApi.ApplyStatus(c, CharacterAfflictions.STATUSTYPE.Curse, perLevel);
-                    Plugin.Log.LogInfo($"[RollOfTheScout] 众魂阻挠：{Nick(c)} 进入新关卡 诅咒+{perLevel * 100f:0.#}。");
+                    RecordMilesCurse(c);
+                    continue;
                 }
-                RecordMilesCurse(c);
+
+                // 期望值 = 进入本层前的记录值（若主机可见的实际值更高，则以实际为准，避免抹掉其它来源的涨幅）+ 本层 +5。
+                // **不读回「相加后」的主机副本**：远端状态是异步同步的，读回可能只看到「加了一半」（例如 17.5）
+                // 或完全没同步；把期望值直接写进记录，保护逻辑才能按正确目标补齐。
+                float visible = HostApi.GetStatus(c, CharacterAfflictions.STATUSTYPE.Curse);
+                float baseline;
+                if (!_milesCurseRecord.TryGetValue(id, out baseline) || visible > baseline + 0.0125f)
+                    baseline = visible;
+                if (baseline < 0f) baseline = 0f;
+
+                HostApi.ApplyStatus(c, CharacterAfflictions.STATUSTYPE.Curse, perLevel);
+                RecordMilesCurse(c, Mathf.Clamp01(baseline + perLevel));
+
+                Plugin.Log.LogInfo($"[RollOfTheScout] 众魂阻挠：{Nick(c)} 进入新关卡 诅咒+{perLevel * 100f:0.#}。");
             }
+            // 清掉本帧未被消费的登记项（对应角色已不在列表里）
+            _milesLevelBonusIncluded.Clear();
         }
 
         /// <summary>【众魂阻挠】童军领队的场上**同时存在**上限（硬编码，不提供配置项）。</summary>
@@ -8622,6 +8762,7 @@ namespace RollOfTheScout
                 if (_milesCurseAllowUntil.TryGetValue(id, out float until) && Time.time < until)
                 {
                     _milesCurseRecord[id] = cur;
+                    ResetMilesCurseFixState(id);
                     continue;
                 }
 
@@ -8629,15 +8770,31 @@ namespace RollOfTheScout
                 if (cur > rec + 0.0125f)
                 {
                     _milesCurseRecord[id] = cur;
+                    ResetMilesCurseFixState(id);
                     continue;
                 }
 
-                // 降低（非允许窗口内）→ 强制恢复到最新记录值
+                // 降低（非允许窗口内）→ 强制恢复到最新记录值。
+                // 注意：主机读到的 cur 是**远端同步副本**，主机下发的写入不会自动回传，
+                // 因此「偏低」也可能只是副本滞后；这里按快速→慢速节流重试，避免每秒重复双 RPC + 日志刷屏。
                 if (cur < rec - 0.0125f)
                 {
+                    if (_milesCurseFixNext.TryGetValue(id, out float next) && Time.time < next) continue;
+
                     HostApi.SetStatusAbsolute(c, CharacterAfflictions.STATUSTYPE.Curse, rec);
-                    Plugin.Log.LogInfo(
-                        $"[RollOfTheScout] 受诅残魂：{Nick(c)} 诅咒被外部降低（{cur * 100f:0.#} → 目标 {rec * 100f:0.#}），已强制恢复。");
+
+                    _milesCurseFixTries.TryGetValue(id, out int tries);
+                    tries++;
+                    _milesCurseFixTries[id] = tries;
+                    _milesCurseFixNext[id] = Time.time
+                        + (tries <= MilesCurseFastRetryCount ? MilesCurseFastRetrySeconds : MilesCurseSlowRetrySeconds);
+
+                    // 只在前两次与之后每 4 次打日志：既保留可诊断性，又不刷屏。
+                    if (tries <= 2 || tries % 4 == 0)
+                    {
+                        Plugin.Log.LogInfo(
+                            $"[RollOfTheScout] 受诅残魂：{Nick(c)} 诅咒被外部降低（{cur * 100f:0.#} → 目标 {rec * 100f:0.#}），已强制恢复。");
+                    }
                 }
             }
         }
@@ -9755,15 +9912,23 @@ namespace RollOfTheScout
         /// 构造「当前职业分配情况」的每个玩家一行文本（形如「昵称：职业」，含「无职业」）。
         /// 主机屏幕面板与发往客机的广播（<see cref="PublishClassSnapshot"/>）、
         /// 以及客机侧的接收面板共用同一套措辞，保证显示内容一致。
+        ///
+        /// 性能：结果按「(角色 ViewID, 职业码, 昵称哈希)」签名缓存 —— 按住显示键时本方法每帧被调用，
+        /// 但只有分配真的变化时才重建字符串（否则每帧都要为每个玩家拼一次富文本）。
         /// </summary>
         private List<string> BuildClassListLines()
         {
+            int signature = ComputeClassListSignature();
+            if (signature == _classListSignature && _classListLinesCache != null) return _classListLinesCache;
+
             var lines = new List<string>();
 
             if (PhotonNetwork.IsMasterClient)
             {
-                foreach (var character in HostApi.GetActiveCharacters())
+                var characters = HostApi.GetActiveCharacters();
+                for (int i = 0; i < characters.Count; i++)
                 {
+                    var character = characters[i];
                     lines.Add($"{Nick(character)}：{ClassLedger.Describe(_ledger.GetClass(character))}");
                 }
             }
@@ -9771,15 +9936,63 @@ namespace RollOfTheScout
             {
                 // 客机：按主机广播的 ActorNumber → 昵称（与主机的 PhotonView.Owner.NickName 完全一致）
                 var room = PhotonNetwork.CurrentRoom;
-                foreach (var kv in _remoteClasses)
+                for (int i = 0; i < _remoteClasses.Count; i++)
                 {
+                    var kv = _remoteClasses[i];
                     var player = room != null ? room.GetPlayer(kv.Key) : null;
                     string name = player != null && !string.IsNullOrEmpty(player.NickName)
                         ? player.NickName : $"#{kv.Key}";
                     lines.Add($"{name}：{RemoteClassNameOf(kv.Value)}");
                 }
             }
+
+            _classListSignature = signature;
+            _classListLinesCache = lines;
             return lines;
+        }
+
+        /// <summary>
+        /// 职业分配面板的「内容签名」：只读整数 / 字符串哈希，不分配任何对象。
+        /// 用于判断是否需要重建面板文本（见 <see cref="BuildClassListLines"/>）。
+        /// </summary>
+        private int ComputeClassListSignature()
+        {
+            unchecked
+            {
+                // 起始值区分「主机 / 客机模式」：房主迁移后即使内容巧合相同也不会误用上一种模式的缓存
+                int sig = PhotonNetwork.IsMasterClient ? 19 : 23;
+                if (PhotonNetwork.IsMasterClient)
+                {
+                    var all = Character.AllCharacters;
+                    if (all != null)
+                    {
+                        for (int i = 0; i < all.Count; i++)
+                        {
+                            var c = all[i];
+                            if (c == null || c.inAirport) continue;
+                            if (c.photonView == null || c.photonView.Owner == null) continue;
+                            sig = sig * 31 + c.photonView.ViewID;
+                            sig = sig * 31 + (int)_ledger.GetClass(c);
+                            string name = c.characterName;
+                            if (!string.IsNullOrEmpty(name)) sig = sig * 31 + name.GetHashCode();
+                        }
+                    }
+                }
+                else
+                {
+                    var room = PhotonNetwork.CurrentRoom;
+                    for (int i = 0; i < _remoteClasses.Count; i++)
+                    {
+                        var kv = _remoteClasses[i];
+                        sig = sig * 31 + kv.Key;
+                        sig = sig * 31 + kv.Value;
+                        var player = room != null ? room.GetPlayer(kv.Key) : null;
+                        if (player != null && !string.IsNullOrEmpty(player.NickName))
+                            sig = sig * 31 + player.NickName.GetHashCode();
+                    }
+                }
+                return sig;
+            }
         }
 
         /// <summary>把「当前职业分配情况」广播给安装了本模组 / 附属模组（RollOfTheScoutClient）的客机。</summary>
@@ -9809,7 +10022,31 @@ namespace RollOfTheScout
             if (pairs.Count == 0) return;
 
             ClassDisplayNet.BroadcastClassSnapshot(pairs);
+
+            // 职业名 / 关键词 / 简介都是**静态文本**（每个职业码一份）：不再每 2 秒随快照全量重发，
+            // 只在「出现过的职业集合变化」或每 ClassTextResendSeconds 秒补发一次（中途加入者仍能收到）。
+            int textHash = 17;
+            for (int i = 0; i < names.Count; i++) textHash = unchecked(textHash * 31 + names[i].Key);
+            if (textHash == _lastClassTextHash && Time.time < _nextClassTextTime) return;
+
+            _lastClassTextHash = textHash;
+            _nextClassTextTime = Time.time + ClassDisplayNet.ClassTextResendSeconds;
+
             ClassDisplayNet.BroadcastClassNames(names);
+
+            // 关键词 / 简介：文本较长，单独成表发送。主机文案表里没有的职业（理论上不会出现）自动跳过。
+            var keywords = new List<KeyValuePair<int, string>>(names.Count);
+            var intros = new List<KeyValuePair<int, string>>(names.Count);
+            for (int i = 0; i < names.Count; i++)
+            {
+                int code = names[i].Key;
+                string kw = ClassIntroText.Keywords(code);
+                string intro = ClassIntroText.Intro(code);
+                if (!string.IsNullOrEmpty(kw)) keywords.Add(new KeyValuePair<int, string>(code, kw));
+                if (!string.IsNullOrEmpty(intro)) intros.Add(new KeyValuePair<int, string>(code, intro));
+            }
+            ClassDisplayNet.BroadcastClassKeywords(keywords);
+            ClassDisplayNet.BroadcastClassIntro(intros);
         }
 
         // ---------------------------------------------------------------
@@ -9851,6 +10088,16 @@ namespace RollOfTheScout
                     // 职业名对照表：新版主模组新增职业时，本机（客机模式）无需更新即可正确显示其名称。
                     foreach (var kv in ClassDisplayNet.ParseClassNames(data))
                         _remoteClassNames[kv.Key] = kv.Value;
+                    InvalidateClassIntroCache();   // 标题里的职业名可能变化
+                }
+                else if (kind == ClassDisplayNet.KindClassKeywords || kind == ClassDisplayNet.KindClassIntro)
+                {
+                    // 新版主模组新增职业的「关键词 / 简介」：本机文案表没有该职业时用主机广播的文本兜底
+                    //（这样主模组更新后，旧版本机不必同步更新也能显示新职业介绍）。
+                    var map = kind == ClassDisplayNet.KindClassKeywords ? _remoteClassKeywords : _remoteClassIntro;
+                    foreach (var kv in ClassDisplayNet.ParseClassNames(data))
+                        map[kv.Key] = kv.Value;
+                    InvalidateClassIntroCache();
                 }
                 else if (kind == ClassDisplayNet.KindToast)
                 {
@@ -9934,6 +10181,7 @@ namespace RollOfTheScout
             if (!visible)
             {
                 // 不可见：走「只隐藏、不构建文本」的通道，避免每帧无谓的字符串分配。
+                // SetPanelHidden 会连同下方的「职业介绍」板块一起隐藏。
                 PeakNativeUi.NativeOverlay.SetPanelHidden();
                 return;
             }
@@ -9945,7 +10193,89 @@ namespace RollOfTheScout
                 return;
             }
 
-            PeakNativeUi.NativeOverlay.SetPanel(ClassListTitle(), lines, visible: true);
+            // 版本号 = 面板内容签名 + 标题哈希：按住显示时每帧推送，内容没变就不重建字符串 / 不重排。
+            string title = ClassListTitle();
+            int panelVersion = unchecked(_classListSignature * 31 + title.GetHashCode());
+            PeakNativeUi.NativeOverlay.SetPanel(title, lines, visible: true, panelVersion);
+
+            // 面板下方：本人职业的关键词 + 简介（只显示自己，不列出全部职业）。
+            if (TryBuildClassIntro(LocalClassCode(), out string introTitle, out List<string> introLines))
+                PeakNativeUi.NativeOverlay.SetClassIntro(introTitle, introLines, visible: true, _classIntroVersion);
+            else
+                PeakNativeUi.NativeOverlay.SetClassIntroHidden();
+        }
+
+        /// <summary>职业介绍缓存失效（主机广播来新文案 / 换局时调用）。</summary>
+        private void InvalidateClassIntroCache()
+        {
+            _classIntroVersion++;
+            _classIntroCacheCode = -1;
+            _classIntroCacheLines = null;
+        }
+
+        /// <summary>本机玩家当前职业数值（0 = 无职业 / 尚未收到广播）。</summary>
+        private int LocalClassCode()
+        {
+            var local = Character.localCharacter;
+            if (local == null) return 0;
+            return GetLocalClassCode(local);
+        }
+
+        /// <summary>
+        /// 构造「本人职业介绍」板块的标题与正文（关键词 / 简介）。
+        /// 结果按「职业数值 + 文案版本」缓存：职业不变时不重复拼接字符串（面板按住显示时每帧都会调用）。
+        ///
+        /// 文案来源：**优先本机文案表**（语言与本地游戏一致）；本机表里没有该职业时
+        /// （主模组新增职业、本机是旧版本），退回主机广播来的文本 —— 因此主模组更新后
+        /// 附属模组/旧版客机无需同步更新，也能显示新职业的介绍。
+        /// 返回 false 表示该职业没有介绍文案（如「无职业」），此时应隐藏板块。
+        /// </summary>
+        private bool TryBuildClassIntro(int code, out string title, out List<string> lines)
+        {
+            title = null;
+            lines = null;
+            if (code <= 0) return false;
+
+            if (code == _classIntroCacheCode
+                && _classIntroCacheVersion == _classIntroVersion
+                && _classIntroCacheLines != null)
+            {
+                title = _classIntroCacheTitle;
+                lines = _classIntroCacheLines;
+                return true;
+            }
+
+            string keywords = ClassIntroText.KeywordsLine(code);
+            string intro = ClassIntroText.IntroLine(code);
+
+            // 本机文案表没有（或只有一半）→ 用主机广播的原文兜底
+            //（简介文本自带「【名称】」前缀，不再额外加「简介：」标签）
+            if (string.IsNullOrEmpty(keywords) && _remoteClassKeywords.TryGetValue(code, out string remoteKeywords))
+                keywords = LocalizeKeywordsLine(remoteKeywords);
+            if (string.IsNullOrEmpty(intro) && _remoteClassIntro.TryGetValue(code, out string remoteIntro))
+                intro = remoteIntro;
+
+            if (string.IsNullOrEmpty(keywords) && string.IsNullOrEmpty(intro)) return false;
+
+            var list = new List<string>(2);
+            if (!string.IsNullOrEmpty(keywords)) list.Add(keywords);
+            if (!string.IsNullOrEmpty(intro)) list.Add(intro);
+
+            _classIntroCacheCode = code;
+            _classIntroCacheVersion = _classIntroVersion;
+            _classIntroCacheTitle = ClassIntroText.TitlePrefix + RemoteClassNameOf(code);
+            _classIntroCacheLines = list;
+
+            title = _classIntroCacheTitle;
+            lines = list;
+            return true;
+        }
+
+        /// <summary>给「主机广播来的关键词原文」加上本机语言的标签。</summary>
+        private static string LocalizeKeywordsLine(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return string.Empty;
+            return ConfigLocalization.UseEnglish ? "Keywords: " + text : "关键词：" + text;
         }
 
         /// <summary>
@@ -10013,6 +10343,50 @@ namespace RollOfTheScout
                 var line = new Rect(box.x + 10f, box.y + 6f + lineH * i, box.width - 20f, lineH);
                 GUI.Label(line, lines[i], i == 0 ? _classListTitleStyle : _classListStyle);
             }
+
+            // 面板下方：本人职业的关键词与简介（与面板同时显示）
+            DrawClassIntro(box.yMax + 8f);
+        }
+
+        /// <summary>
+        /// IMGUI 回退绘制「本人职业介绍」板块（仅在原生字体叠加层不可用时走到这里）。
+        /// 与原生叠加层同义：只显示本机玩家自己的职业，不列出全部职业。
+        /// </summary>
+        private void DrawClassIntro(float top)
+        {
+            if (!TryBuildClassIntro(LocalClassCode(), out string title, out List<string> lines)) return;
+
+            if (_classIntroStyle == null)
+            {
+                int size = Mathf.Max(16, Mathf.RoundToInt(Screen.height / 48f));
+                _classIntroTitleStyle = new GUIStyle(GUI.skin.label)
+                {
+                    fontSize = size,
+                    fontStyle = FontStyle.Bold,
+                    alignment = TextAnchor.MiddleLeft,
+                };
+                _classIntroTitleStyle.normal.textColor = new Color(1f, 0.9f, 0.4f);
+                _classIntroStyle = new GUIStyle(GUI.skin.label)
+                {
+                    fontSize = size,
+                    alignment = TextAnchor.MiddleLeft,
+                    wordWrap = true,
+                };
+                _classIntroStyle.normal.textColor = Color.white;
+            }
+
+            float w = Screen.width * 0.40f;
+            float lineH = _classIntroStyle.fontSize * 1.6f;
+            var body = new GUIContent(string.Join("\n", lines));
+            float bodyH = _classIntroStyle.CalcHeight(body, w - 20f);
+            var box = new Rect(Screen.width - w - 12f, top, w, lineH + bodyH + 16f);
+
+            GUI.color = new Color(0f, 0f, 0f, 0.6f);
+            GUI.DrawTexture(box, Texture2D.whiteTexture);
+            GUI.color = Color.white;
+
+            GUI.Label(new Rect(box.x + 10f, box.y + 6f, box.width - 20f, lineH), title, _classIntroTitleStyle);
+            GUI.Label(new Rect(box.x + 10f, box.y + 6f + lineH, box.width - 20f, bodyH), body, _classIntroStyle);
         }
 
         private void DrawToasts()
