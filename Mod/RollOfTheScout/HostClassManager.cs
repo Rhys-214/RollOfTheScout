@@ -454,6 +454,9 @@ namespace RollOfTheScout
         private float _scoutAllyInjuryTimer;
         private float _scoutAllyHungerTimer;
         private float _dancerDanceTimer;
+        // 「临触发 10 秒前」的定向预警是否已发（每轮重置）；只有舞王 / 待皓本人能看到。
+        private bool _dancerFrenzyWarned;
+        private bool _daihaoSliplWarned;
         private float _daihaoVoiceTimer;
         private float _daihaoSliplTimer;
         private float _daihaoEggTimer;
@@ -645,8 +648,15 @@ namespace RollOfTheScout
         // 初始诅咒与每层诅咒合并成一次绝对赋值后，本帧稍后的 OnMilesSoulNewLevel 不能再加一次（否则 20 变 25）。
         private readonly HashSet<string> _milesLevelBonusIncluded = new HashSet<string>();
 
-        // 【封印之力】本局已「第一次拾取」过的童军宝石预制体名（用于 -诅咒 与【童军的力量】判定）。
+        // 【封印之力】本局已「第一次拾取」过的童军宝石预制体名（**全场共用**，仅用于【零号守则】的解锁前置）。
         private readonly HashSet<string> _milesGemPicked = new HashSet<string>();
+
+        // 【封印之力】玩家稳定标识 → 该玩家本局已首拾过的童军宝石名。
+        // 【受诅残魂】的「首拾 -5」「集齐四种 → 童军的力量」都是**按角色**结算的：
+        // 用全场共用的集合会导致「别人先拾过这颗宝石」时，自己拾起第 4 颗时因 Add 失败而提前 return，
+        // 从而永远触发不了【童军的力量】（实测问题）。
+        private readonly Dictionary<string, HashSet<string>> _milesGemsByPlayer =
+            new Dictionary<string, HashSet<string>>();
 
         // 【众魂阻挠】玩家稳定标识 → 本局累计使用童军宝石道具的次数（每累计 N 次生成 1 名童军领队）。
         private readonly Dictionary<string, int> _milesGemUseCount = new Dictionary<string, int>();
@@ -1098,6 +1108,12 @@ namespace RollOfTheScout
         private readonly List<float> _toastExpiries = new List<float>();
         private const float ToastDuration = 8f;
         private const int ToastMaxCount = 5;
+
+        /// <summary>强制后空翻的提前预警时间（秒）。</summary>
+        private const float BackflipWarnLeadSeconds = 10f;
+
+        /// <summary>强制后空翻预警（中英双语；**只发给对应职业的玩家本人**，见 ShowToastTargeted）。</summary>
+        private const string BackflipWarnText = "！即将强制后空翻！\n! Forced backflip incoming !";
         private GUIStyle _toastStyle;
 
         /// <summary>
@@ -1263,7 +1279,9 @@ namespace RollOfTheScout
             Plugin.Log.LogInfo(
                 $"[RollOfTheScout] 转职：{Nick(character)} {source}，职业 {ClassLedger.Describe(oldType)} → " +
                 $"{ClassLedger.Describe(newType)}（本局已转职 {_reclassUsed[id]}/{maxCount} 次）。");
-            ShowToast($"{Nick(character)} 转职：{ClassLedger.Describe(oldType)} → {ClassLedger.Describe(newType)}");
+            ShowToast(
+                $"{Nick(character)} reclassed: {ClassLedger.DescribeEnglish(oldType)} → {ClassLedger.DescribeEnglish(newType)}\n"
+                + $"{Nick(character)} 转职：{ClassLedger.Describe(oldType)} → {ClassLedger.Describe(newType)}");
         }
 
         /// <summary>
@@ -1573,7 +1591,9 @@ namespace RollOfTheScout
             Plugin.Log.LogInfo(
                 $"[RollOfTheScout] 模因污染：{Nick(character)} 食用了「{item.gameObject.name}」，职业 " +
                 $"{ClassLedger.Describe(oldType)} → 待皓。");
-            ShowToast($"{Nick(character)} 模因污染：{ClassLedger.Describe(oldType)} → 待皓");
+            ShowToast(
+                $"{Nick(character)} meme infection: {ClassLedger.DescribeEnglish(oldType)} → Daihao\n"
+                + $"{Nick(character)} 模因污染：{ClassLedger.Describe(oldType)} → 待皓");
         }
 
         /// <summary>
@@ -1682,7 +1702,7 @@ namespace RollOfTheScout
 
             Plugin.Log.LogInfo(
                 $"[RollOfTheScout] 封印解放：童军领队的灵魂已解放，清除在场所有玩家的全部负面状态并 +{stamina * 100f:0.#} 额外体力。");
-            ShowToast("封印解放：童军领队的灵魂已解放，全场净化！");
+            ShowToast("Scoutmaster's souls freed — the whole field is purified!\n封印解放：童军领队的灵魂已解放，全场净化！");
         }
 
         /// <summary>
@@ -2054,6 +2074,7 @@ namespace RollOfTheScout
             _milesLevelBonusIncluded.Clear();
             _milesCurseTimer = 0f;
             _milesGemPicked.Clear();
+            _milesGemsByPlayer.Clear();
             _milesGemUseCount.Clear();
             _milesUseGuardUntil.Clear();
             _milesPetrifySnapshot.Clear();
@@ -2189,6 +2210,7 @@ namespace RollOfTheScout
             _milesLevelBonusIncluded.Clear();
             _milesCurseTimer = 0f;
             _milesGemPicked.Clear();
+            _milesGemsByPlayer.Clear();
             _milesGemUseCount.Clear();
             _milesUseGuardUntil.Clear();
             _milesPetrifySnapshot.Clear();
@@ -3083,7 +3105,9 @@ namespace RollOfTheScout
                 Plugin.Log.LogInfo(
                     $"[RollOfTheScout] 乐队·转职：{Nick(character)} 身背乐器且附近有乐队成员（已连续 {streak} 次检测），" +
                     $"职业 {ClassLedger.Describe(oldType)} → 乐队成员（{chance * 100f:0.#}% 判定命中）。");
-                ShowToast($"{Nick(character)} 乐队·转职：{ClassLedger.Describe(oldType)} → 乐队成员");
+                ShowToast(
+                $"{Nick(character)} band reclass: {ClassLedger.DescribeEnglish(oldType)} → Band\n"
+                + $"{Nick(character)} 乐队·转职：{ClassLedger.Describe(oldType)} → 乐队成员");
             }
         }
 
@@ -3627,7 +3651,9 @@ namespace RollOfTheScout
         /// </summary>
         private void NotifyAssignment(Character character, ClassType type)
         {
-            ShowToast($"{Nick(character)} 的职业：{ClassLedger.Describe(type)}");
+            ShowToast(
+                $"{Nick(character)} class: {ClassLedger.DescribeEnglish(type)}\n"
+                + $"{Nick(character)} 的职业：{ClassLedger.Describe(type)}");
         }
 
         private static string Nick(Character character)
@@ -4533,7 +4559,7 @@ namespace RollOfTheScout
             if (stamina != 0f) HostApi.BoostExtraStamina(pacifist, stamina);
             Plugin.Log.LogInfo(
                 $"[RollOfTheScout] 和平？：{Nick(pacifist)} 踢中玩家，额外体力+{stamina * 100f:0.#}。");
-            ShowToast($"和平？：{Nick(pacifist)} 踢中玩家");
+            ShowToast($"Pacifism?: {Nick(pacifist)} kicked a player\n和平？：{Nick(pacifist)} 踢中玩家");
         }
 
         private void AwardPacifistMiss(Character pacifist)
@@ -4545,7 +4571,7 @@ namespace RollOfTheScout
             if (drowsy > 0f) HostApi.ApplyStatus(pacifist, CharacterAfflictions.STATUSTYPE.Drowsy, drowsy);
             Plugin.Log.LogInfo(
                 $"[RollOfTheScout] 和平？：{Nick(pacifist)} 踢人未踢中玩家，额外体力-{stamina * 100f:0.#}、困倦+{drowsy * 100f:0.#}。");
-            ShowToast($"和平？：{Nick(pacifist)} 踢空");
+            ShowToast($"Pacifism?: {Nick(pacifist)} missed the kick\n和平？：{Nick(pacifist)} 踢空");
         }
 
         /// <summary>由 Photon 玩家（旗标的 Owner）反查场景中的 Character。</summary>
@@ -5167,7 +5193,8 @@ namespace RollOfTheScout
 
             Plugin.Log.LogInfo($"[RollOfTheScout] 黑魔法：{Nick(mage)} 触发第 {index} 个效果【{effect}】。");
             if (ModConfig.General.MageEffectNotify.Value)
-                ShowToast($"法师·黑魔法：{Nick(mage)} 触发第 {index} 个【{effect}】");
+                ShowToast($"Mage · Black Magic: {Nick(mage)} triggered #{index} 【{effect}】\n"
+                    + $"法师·黑魔法：{Nick(mage)} 触发第 {index} 个【{effect}】");
             ApplyMageSkeletonEffect(mage, effect);
 
             // 判定是否继续连锁
@@ -5208,7 +5235,8 @@ namespace RollOfTheScout
             string effect = WeightedPicker.Pick(pool);
             Plugin.Log.LogInfo($"[RollOfTheScout] 魔法卷轴：{Nick(mage)} 触发【{effect}】。");
             if (ModConfig.General.MageEffectNotify.Value)
-                ShowToast($"法师·魔法卷轴：{Nick(mage)} 触发【{effect}】");
+                ShowToast($"Mage · Scroll: {Nick(mage)} triggered 【{MageEffectEnglish(effect)}】\n"
+                + $"法师·魔法卷轴：{Nick(mage)} 触发【{effect}】");
             switch (effect)
             {
                 case "强化": DoMageBuff(mage); break;
@@ -5224,6 +5252,24 @@ namespace RollOfTheScout
         }
 
         // ---------------- 人类形态：9 种效果 ----------------
+
+        /// <summary>法师卷轴效果的英文名（提示信息用；未收录则原样返回）。</summary>
+        private static string MageEffectEnglish(string name)
+        {
+            switch (name)
+            {
+                case "强化": return "Enhance";
+                case "激化": return "Intensify";
+                case "固化": return "Solidify";
+                case "点化": return "Enlighten";
+                case "净化": return "Cleanse";
+                case "治愈": return "Heal";
+                case "反重": return "Anti-Gravity";
+                case "传送": return "Teleport";
+                case "苏生": return "Revive";
+                default: return name;
+            }
+        }
 
         private void DoMageBuff(Character mage)
         {
@@ -7476,9 +7522,27 @@ namespace RollOfTheScout
             // ---- 舞王·狂热舞者：定时强制舞王自己后空翻一次 ----
             _dancerDanceTimer += dt;
             float frenzyInterval = ModConfig.Dancer.FrenzyIntervalSeconds.Value;
+            if (frenzyInterval > 0f)
+            {
+                // 临触发 10 秒前：只给「舞王本人」发一条定向提示（其余玩家看不到）
+                if (!_dancerFrenzyWarned && frenzyInterval - _dancerDanceTimer <= BackflipWarnLeadSeconds)
+                {
+                    _dancerFrenzyWarned = true;
+                    if (_ledger.HasClassInRoom(ClassType.Dancer))
+                    {
+                        foreach (var dancer in characters)
+                        {
+                            if (_ledger.GetClass(dancer) != ClassType.Dancer) continue;
+                            if (IsDead(dancer)) continue;
+                            ShowToastTargeted(dancer, BackflipWarnText);
+                        }
+                    }
+                }
+            }
             if (frenzyInterval > 0f && _dancerDanceTimer >= frenzyInterval)
             {
                 _dancerDanceTimer = 0f;
+                _dancerFrenzyWarned = false;
                 // 无舞王在场 → 跳过对全体玩家的遍历（狂热舞者每人都会广播一条表情 RPC，跳过收益更高）
                 if (_ledger.HasClassInRoom(ClassType.Dancer))
                 {
@@ -7515,9 +7579,27 @@ namespace RollOfTheScout
             // ---- 待皓·脚滑：定时强制待皓玩家后空翻一次（翻完必定摔倒）----
             _daihaoSliplTimer += dt;
             float slipInterval = ModConfig.Daihao.SlipIntervalSeconds.Value;
+            if (slipInterval > 0f)
+            {
+                // 临触发 10 秒前：只给「待皓本人」发一条定向提示
+                if (!_daihaoSliplWarned && slipInterval - _daihaoSliplTimer <= BackflipWarnLeadSeconds)
+                {
+                    _daihaoSliplWarned = true;
+                    if (_ledger.HasClassInRoom(ClassType.Daihao))
+                    {
+                        foreach (var c in characters)
+                        {
+                            if (_ledger.GetClass(c) != ClassType.Daihao) continue;
+                            if (IsDead(c)) continue;
+                            ShowToastTargeted(c, BackflipWarnText);
+                        }
+                    }
+                }
+            }
             if (slipInterval > 0f && _daihaoSliplTimer >= slipInterval)
             {
                 _daihaoSliplTimer = 0f;
+                _daihaoSliplWarned = false;
                 // 无待皓在场 → 跳过对全体玩家的遍历（脚滑每人都会广播一条表情 RPC）
                 if (_ledger.HasClassInRoom(ClassType.Daihao))
                 {
@@ -8225,7 +8307,25 @@ namespace RollOfTheScout
             if (_ledger.GetClass(character) != ClassType.MilesSoul) return;
             if (!MilesGemItems.Contains(gemName)) return;      // 童军的荣耀不参与「首拾」
 
-            if (!_milesGemPicked.Add(gemName)) return;          // 本局已首拾过该宝石
+            // 全局集合：仅用于【零号守则】的「本局已拾取过毅力」前置（任何人都算）。
+            _milesGemPicked.Add(gemName);
+
+            // 按玩家结算：自己的「首拾」与「集齐四种」都只看自己拾过哪些，
+            // 避免别人先拾过同一颗宝石时自己最后一颗无法触发【童军的力量】。
+            string milesId = _ledger.IdOf(character);
+            HashSet<string> mine;
+            if (string.IsNullOrEmpty(milesId))
+            {
+                mine = null;   // 理论上不会发生：拿不到稳定标识时退回旧的全局判定
+            }
+            else if (!_milesGemsByPlayer.TryGetValue(milesId, out mine))
+            {
+                mine = new HashSet<string>();
+                _milesGemsByPlayer[milesId] = mine;
+            }
+
+            bool firstPick = mine != null ? mine.Add(gemName) : _milesGemPicked.Count > 0;
+            if (!firstPick) return;                            // 自己本局已首拾过该宝石
 
             float curse = GemFirstPickCurse(gemName);
             if (curse > 0f)
@@ -8235,16 +8335,29 @@ namespace RollOfTheScout
 
             // 【童军的力量】：四种宝石都拾取过后，额外 -诅咒、清除「诅咒以外」的所有负面状态（含石化），
             // 并立即获得一次无敌（奶白金）与加速（同先驱·高代谢）。
-            if (_milesGemPicked.Contains(ItemNames.AmuletHealing)
-                && _milesGemPicked.Contains(ItemNames.AmuletSuperJump)
-                && _milesGemPicked.Contains(ItemNames.AmuletClone)
-                && _milesGemPicked.Contains(ItemNames.AmuletInfiniteStamina))
+            bool allGems = mine != null
+                ? mine.Contains(ItemNames.AmuletHealing)
+                    && mine.Contains(ItemNames.AmuletSuperJump)
+                    && mine.Contains(ItemNames.AmuletClone)
+                    && mine.Contains(ItemNames.AmuletInfiniteStamina)
+                : _milesGemPicked.Contains(ItemNames.AmuletHealing)
+                    && _milesGemPicked.Contains(ItemNames.AmuletSuperJump)
+                    && _milesGemPicked.Contains(ItemNames.AmuletClone)
+                    && _milesGemPicked.Contains(ItemNames.AmuletInfiniteStamina);
+
+            if (allGems)
             {
                 float powerCurse = ModConfig.MilesSoul.PowerCurse.Value;
                 if (powerCurse > 0f) ReduceMilesCurse(character, powerCurse, "童军的力量");
                 HostApi.ClearNegativeStatuses(character, excludeCurse: true, excludePetrify: false);
                 FeedTransientItem(character, ItemNames.FortifiedMilk, "童军的力量");
                 GrantSprint(character, "童军的力量", clearDrowsyAfter: true);
+
+                // 中英双语提示（提示层/附属模组都会显示两行）
+                ShowToast(
+                    $"MilesSoul {Nick(character)} has collected all Scout Gems and received the 【Scout's Power】 inspiration.\n"
+                    + $"残魂 {Nick(character)} 已集齐童军宝石，获得【童军的力量】激励。");
+
                 Plugin.Log.LogInfo(
                     $"[RollOfTheScout] 童军的力量：{Nick(character)} 已集齐四种童军宝石，清除非诅咒的全部负面状态（含石化），并获得无敌 + 加速。");
             }
@@ -9751,6 +9864,32 @@ namespace RollOfTheScout
         {
             if (string.IsNullOrEmpty(text)) return;
 
+            PushLocalToast(text);
+
+            // 同步到安装了附属模组（RollOfTheScoutClient）的客机，让其在客机自己屏幕上也能看到同一条提示。
+            ClassDisplayNet.BroadcastToast(text);
+        }
+
+        /// <summary>
+        /// 定向提示：只有 <paramref name="target"/> 本人（主机屏幕看本机角色、客机看自己的 ActorNumber）会显示。
+        /// 用于「只有相应职业的玩家才看得到」的提醒。
+        /// </summary>
+        private void ShowToastTargeted(Character target, string text)
+        {
+            if (target == null || string.IsNullOrEmpty(text)) return;
+
+            int actor = target.photonView != null && target.photonView.Owner != null
+                ? target.photonView.Owner.ActorNumber : -1;
+
+            if (Character.localCharacter == target) PushLocalToast(text);
+            ClassDisplayNet.BroadcastTargetedToast(actor, text);
+        }
+
+        /// <summary>只把提示放进本机（主机屏幕）的提示队列，不广播。</summary>
+        private void PushLocalToast(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+
             if (_toasts.Count >= ToastMaxCount)
             {
                 _toasts.RemoveAt(0);
@@ -9759,9 +9898,6 @@ namespace RollOfTheScout
             _toasts.Add(text);
             _toastExpiries.Add(Time.time + ToastDuration);
             _toastVersion++;   // 内容已变：让每帧的叠加层推送重建一次文本
-
-            // 同步到安装了附属模组（RollOfTheScoutClient）的客机，让其在客机自己屏幕上也能看到同一条提示。
-            ClassDisplayNet.BroadcastToast(text);
         }
 
         private void ExpireToasts()
@@ -9793,15 +9929,15 @@ namespace RollOfTheScout
             bool down = Input.GetKeyDown(key);
             bool held = Input.GetKey(key);
 
-            if (_classListModeKind == 1)            // 按住显示
+            if (_classListModeKind == 1)            // 1=按住显示
             {
                 _classListHeld = held;
             }
-            else if (_classListModeKind == 2)       // 按下切换
+            else if (_classListModeKind == 3)       // 3=按下切换
             {
                 if (down) _classListToggled = !_classListToggled;
             }
-            else                                    // 按下显示 5 秒
+            else                                    // 2=按下显示 5 秒
             {
                 if (down) _classListPressUntil = Time.time + ClassListPressDuration;
             }
@@ -9825,10 +9961,12 @@ namespace RollOfTheScout
             if (!string.Equals(_classListModeRaw, mode))
             {
                 _classListModeRaw = mode;
-                // 中文配置值为 按住显示 / 按下显示 / 按下切换；英文配置值为 HoldToShow / PressToShow / ToggleOnPress。
+                // 配置值固定为 1 / 2 / 3：1=按住显示，2=按下显示 5 秒，3=按下切换。
+                // 旧版文字值（按住显示 / 按下显示 / 按下切换、HoldToShow / PressToShow / ToggleOnPress）仍兼容。
                 string lower = mode.ToLowerInvariant();
-                _classListModeKind = (mode.Contains("按住") || lower.Contains("hold")) ? 1
-                    : (mode.Contains("切换") || lower.Contains("toggle")) ? 2 : 0;
+                _classListModeKind = (mode.Trim() == "1" || mode.Contains("按住") || lower.Contains("hold")) ? 1
+                    : (mode.Trim() == "3" || mode.Contains("切换") || lower.Contains("toggle")) ? 3
+                    : 2;
             }
         }
 
@@ -9847,7 +9985,7 @@ namespace RollOfTheScout
         {
             RefreshClassListInputCache();
             if (_classListModeKind == 1) return _classListHeld;
-            if (_classListModeKind == 2) return _classListToggled;
+            if (_classListModeKind == 3) return _classListToggled;
             return Time.time < _classListPressUntil;
         }
 
@@ -9898,7 +10036,7 @@ namespace RollOfTheScout
         private string RemoteClassNameOf(int code)
         {
             if (_remoteClassNames.TryGetValue(code, out var name) && !string.IsNullOrEmpty(name)) return name;
-            return ClassLedger.Describe((ClassType)code);
+            return ClassLedger.DescribeBilingual((ClassType)code);
         }
 
         /// <summary>按 ActorNumber 取职业名（空字符串 = 无职业 / 未分配），供第三方头顶id显示模组兼容层使用。</summary>
@@ -9929,7 +10067,7 @@ namespace RollOfTheScout
                 for (int i = 0; i < characters.Count; i++)
                 {
                     var character = characters[i];
-                    lines.Add($"{Nick(character)}：{ClassLedger.Describe(_ledger.GetClass(character))}");
+                    lines.Add($"{Nick(character)}：{ClassLedger.DescribeBilingual(_ledger.GetClass(character))}");
                 }
             }
             else
@@ -10016,8 +10154,9 @@ namespace RollOfTheScout
 
                 // 顺带把「出现过的职业数值 → 职业名」也发出去：客机端因此不需要内置职业名表，
                 // 将来主模组新增职业时客机（含只装主模组、或装附属模组）无需更新即能正确显示。
+                // 名称为「英文职业名 · 中文职业名」（如 Qu · 区）。
                 if (seenCodes.Add(code))
-                    names.Add(new KeyValuePair<int, string>(code, ClassLedger.Describe((ClassType)code)));
+                    names.Add(new KeyValuePair<int, string>(code, ClassLedger.DescribeBilingual((ClassType)code)));
             }
             if (pairs.Count == 0) return;
 
@@ -10098,6 +10237,18 @@ namespace RollOfTheScout
                     foreach (var kv in ClassDisplayNet.ParseClassNames(data))
                         map[kv.Key] = kv.Value;
                     InvalidateClassIntroCache();
+                }
+                else if (kind == ClassDisplayNet.KindTargetedToast)
+                {
+                    // 定向提示：只有 ActorNumber 匹配本机的客机才显示
+                    int tab = data.IndexOf('\t');
+                    if (tab > 0
+                        && int.TryParse(data.Substring(0, tab), out int actor)
+                        && PhotonNetwork.LocalPlayer != null
+                        && PhotonNetwork.LocalPlayer.ActorNumber == actor)
+                    {
+                        PushLocalToast(data.Substring(tab + 1));
+                    }
                 }
                 else if (kind == ClassDisplayNet.KindToast)
                 {
@@ -10249,9 +10400,9 @@ namespace RollOfTheScout
             string intro = ClassIntroText.IntroLine(code);
 
             // 本机文案表没有（或只有一半）→ 用主机广播的原文兜底
-            //（简介文本自带「【名称】」前缀，不再额外加「简介：」标签）
+            //（广播过来的关键词 / 简介已是「中英双语 + 标签」的完整文本，直接使用）
             if (string.IsNullOrEmpty(keywords) && _remoteClassKeywords.TryGetValue(code, out string remoteKeywords))
-                keywords = LocalizeKeywordsLine(remoteKeywords);
+                keywords = remoteKeywords;
             if (string.IsNullOrEmpty(intro) && _remoteClassIntro.TryGetValue(code, out string remoteIntro))
                 intro = remoteIntro;
 
@@ -10271,13 +10422,6 @@ namespace RollOfTheScout
             return true;
         }
 
-        /// <summary>给「主机广播来的关键词原文」加上本机语言的标签。</summary>
-        private static string LocalizeKeywordsLine(string text)
-        {
-            if (string.IsNullOrEmpty(text)) return string.Empty;
-            return ConfigLocalization.UseEnglish ? "Keywords: " + text : "关键词：" + text;
-        }
-
         /// <summary>
         /// 职业分配面板的标题文本（含当前按键名）。按键名来自配置、几乎不变，
         /// 故缓存下来，避免每帧重新插值出一份内容相同的字符串。
@@ -10289,7 +10433,7 @@ namespace RollOfTheScout
                 return _classListTitleCache;
 
             _classListTitleCacheKey = key;
-            return _classListTitleCache = $"[职业分配] 按 {key} 显示";
+            return _classListTitleCache = $"[职业分配 / Class List] {key}";
         }
 
         private void DrawClassList()
@@ -10306,8 +10450,14 @@ namespace RollOfTheScout
                 if (!_hasRemoteSnapshot) return;   // 客机模式：尚未收到主机广播，暂不显示
             }
 
+            // ⚠ 不能对缓存列表做 Insert：BuildClassListLines 返回的是**缓存列表本身**，
+            // 每帧插入一次标题会让它无限增长（表现为标题刷屏、把分配信息挤出屏幕）。
             var lines = BuildClassListLines();
             if (lines.Count == 0) return;
+
+            var display = new List<string>(lines.Count + 1);
+            display.Add(ClassListTitle());
+            display.AddRange(lines);
 
             if (_classListStyle == null)
             {
@@ -10315,7 +10465,7 @@ namespace RollOfTheScout
                 _classListTitleStyle = new GUIStyle(GUI.skin.label)
                 {
                     fontSize = size,
-                    fontStyle = FontStyle.Bold,
+                    fontStyle = FontStyle.Normal,
                     alignment = TextAnchor.MiddleLeft,
                 };
                 _classListTitleStyle.normal.textColor = new Color(1f, 0.9f, 0.4f);
@@ -10327,21 +10477,19 @@ namespace RollOfTheScout
                 _classListStyle.normal.textColor = Color.white;
             }
 
-            lines.Insert(0, ClassListTitle());
-
             float w = Screen.width * 0.32f;
             float lineH = _classListStyle.fontSize * 1.6f;
-            float h = lineH * lines.Count + 12f;
+            float h = lineH * display.Count + 12f;
             var box = new Rect(Screen.width - w - 12f, 12f, w, h);
 
             GUI.color = new Color(0f, 0f, 0f, 0.6f);
             GUI.DrawTexture(box, Texture2D.whiteTexture);
             GUI.color = Color.white;
 
-            for (int i = 0; i < lines.Count; i++)
+            for (int i = 0; i < display.Count; i++)
             {
                 var line = new Rect(box.x + 10f, box.y + 6f + lineH * i, box.width - 20f, lineH);
-                GUI.Label(line, lines[i], i == 0 ? _classListTitleStyle : _classListStyle);
+                GUI.Label(line, display[i], i == 0 ? _classListTitleStyle : _classListStyle);
             }
 
             // 面板下方：本人职业的关键词与简介（与面板同时显示）
@@ -10362,7 +10510,7 @@ namespace RollOfTheScout
                 _classIntroTitleStyle = new GUIStyle(GUI.skin.label)
                 {
                     fontSize = size,
-                    fontStyle = FontStyle.Bold,
+                    fontStyle = FontStyle.Normal,
                     alignment = TextAnchor.MiddleLeft,
                 };
                 _classIntroTitleStyle.normal.textColor = new Color(1f, 0.9f, 0.4f);
@@ -10793,7 +10941,9 @@ namespace RollOfTheScout
 
             Plugin.Log.LogInfo(
                 $"[RollOfTheScout] 区块链：{Nick(target)} 孢子过量，职业 {ClassLedger.Describe(oldType)} → 区。");
-            ShowToast($"{Nick(target)} 区块链：{ClassLedger.Describe(oldType)} → 区");
+            ShowToast(
+                $"{Nick(target)} blockchain: {ClassLedger.DescribeEnglish(oldType)} → Qu\n"
+                + $"{Nick(target)} 区块链：{ClassLedger.Describe(oldType)} → 区");
             return true;
         }
 
@@ -11470,7 +11620,9 @@ namespace RollOfTheScout
             Plugin.Log.LogInfo(
                 $"[RollOfTheScout] 没吃的赶紧戒：{Nick(target)} 连续食用荔莓 {streak} 次（&gt;{threshold}），" +
                 $"职业 {ClassLedger.Describe(oldType)} → 榔王。");
-            ShowToast($"{Nick(target)} 没吃的赶紧戒：{ClassLedger.Describe(oldType)} → 榔王");
+            ShowToast(
+                $"{Nick(target)} quit-or-die: {ClassLedger.DescribeEnglish(oldType)} → Langwang\n"
+                + $"{Nick(target)} 没吃的赶紧戒：{ClassLedger.Describe(oldType)} → 榔王");
         }
 
         // ---------------------------------------------------------------
@@ -11724,7 +11876,9 @@ namespace RollOfTheScout
                     $"[RollOfTheScout] 开挂·复制：{Nick(p)} 无任何负面状态，复制在场玩家 {Nick(src)} 的职业「{ClassLedger.Describe(srcClass)}」随机效果【{effect}】" +
                     $"，立即给予并持续到下一次检测。");
                 if (ModConfig.Programmer.CheatCopyNotify.Value)
-                    ShowToast($"【开挂】：程序员 {Nick(p)} 获得“{ClassLedger.Describe(srcClass)}”【{effect}】效果");
+                    ShowToast(
+                $"【Cheat 开挂】: Programmer {Nick(p)} copied \"{ClassLedger.DescribeEnglish(srcClass)}\" 【{effect}】\n"
+                + $"【开挂】：程序员 {Nick(p)} 获得“{ClassLedger.Describe(srcClass)}”【{effect}】效果");
             }
         }
 

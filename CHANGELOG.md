@@ -146,7 +146,6 @@
     - The overhead name prefix caches its per-name state component (previously `GetComponent` for every player every frame).
     - MilesSoul curse protection now throttles repeat restores (2.5 s fast retries, then every 20 s) and logs sparsely; a stale host-side copy previously caused two RPCs **and** one log line per second, indefinitely.
     - Observed in the tested session: a third-party mod (`AlwaysDisplayPlayerName`) emitted ~79,000 error lines, which is a major external stutter source; this mod emitted ~3,700 log lines in total.
-
 ### 中文
 
 - **新增** **职业介绍板块**：按键显示职业分配面板时（默认 Tab），面板下方会额外显示**本人职业**的关键词与简介，玩家不必翻阅职业文档就能快速了解自己的职业。文本随游戏语言（中文 / 英文）。主机屏幕、主模组客机模式、以及可选的客机显示附属模组均支持；只显示本机玩家自己的职业，不列出全部职业。
@@ -166,3 +165,56 @@
     - 头顶职业前缀的状态组件改为缓存（此前每帧每个玩家都调用一次 `GetComponent`）。
     - 残魂诅咒保护改为节流重试（前几次 2.5 秒、之后 20 秒）并稀疏打日志；此前主机副本滞后会导致**每秒 2 条 RPC + 1 条日志**且无限持续。
     - 本次实测日志中：第三方模组 `AlwaysDisplayPlayerName` 产生了约 **79000** 条 Error 行，是明显的卡顿外部来源；本模组自身日志总量约 **3700** 行。
+
+## 1.0.7
+
+### English
+
+- **Fixed** MilesSoul 【Seal Power】 / 【Scout's Power】: picking up the **4th** Scout gem only granted that gem's own first-pickup curse reduction and never triggered 【Scout's Power】.
+    - Root cause: the "already picked up" set was **shared by the whole room** and keyed only by gem name. If another player (or the same player earlier) had already picked that gem, `Add` returned false and the handler **returned before** the "all four collected" check — so a client MilesSoul could never complete the set.
+    - Fix: first pickup and "all four" are now tracked **per player** (`player id → gem set`), while a separate room-wide set is kept only for the 【Rule Zero】 unlock condition. The "collect all four" bonus now fires on the 4th gem as intended.
+- **Changed** 【Scout's Power】 additional curse reduction default **5 → 10**, and it now shows a bilingual notice (`MilesSoul … has collected all Scout Gems and received the 【Scout's Power】 inspiration. / 残魂 … 已集齐童军宝石，获得【童军的力量】激励。`).
+- **New** Dancer 【Frenzy Dancer】 and Daihao 【Slippery Feet】 now show a **targeted** warning 10 seconds before each forced backflip (`！即将强制后空翻！/ ! Forced backflip incoming !`). Only the player of that class receives it (new targeted display event; other clients ignore it).
+- **Fixed** The class panel could flood itself with the `[职业分配 / Class List]` title line while the key was held, pushing the player rows off screen.
+    - Root cause: the title was inserted into the **cached** line list (`lines.Insert(0, title)`) on every GUI frame, so the cache grew by one title per frame. The title is now composed into a separate list without mutating the cache.
+- **Changed** **Configuration is now permanently bilingual** (no longer generated per game language):
+    - Section names are `English中文` (e.g. `Explorer先驱`, `General通用`);
+    - keys are `English中文键名` where the English part is split to match the Chinese segments and capitalized (e.g. `Hypermetabolism-HungerIntervalSeconds高代谢-饥饿间隔`);
+    - comments are one English line followed by one Chinese line.
+    - `职业显示-模式` values are now **1 / 2 / 3** (1 = hold, 2 = press for 5 s, 3 = toggle); `转职-表情` defaults to the raw animation name `A_Scout_Emote_Nono`.
+    - Existing config files are **backed up automatically** (`*.cfg.old-<timestamp>`) and regenerated on the first launch after this update — no manual deletion needed.
+- **Changed** Bilingual in-game display:
+    - class panel rows now read `Name：EnglishClass · 中文职业` (e.g. `Rhys：Qu · 区`);
+    - class effect notices show one English line followed by one Chinese line;
+    - the class intro panel now shows `Keywords:` + `【English intro】` + `关键词：` + `【中文简介】` together.
+- **Changed** The overhead class prefix is now **disabled by default** in both the main mod and the client addon.
+    - Reason: it runs per frame for every player; if another overhead-name mod is installed (e.g. `AlwaysDisplayPlayerName`), both rewrite the name text every frame and the resulting TMP rebuilds cause visible frame drops.
+    - Optimisations (still apply when enabled): the per-name state component is cached (no per-frame `GetComponent`), currently hidden names are skipped, and class names are returned from a cache (no per-frame string building).
+- **Changed** Config key names now mirror the Chinese key's hyphen segments with capitalized English parts: `Hypermetabolism-HungerIntervalSeconds高代谢-饥饿间隔` (previously `hypermetabolismHungerIntervalSeconds高代谢-饥饿间隔`). Existing config files are backed up and regenerated automatically (the config revision was bumped).
+- **Changed** On-screen overlay text is no longer bold, and a **thinner sans-serif font** is preferred when the game provides one (falling back to the original font otherwise). English lines are noticeably clearer; IMGUI fallback titles are normal weight too.
+
+
+### 中文
+
+- **修复** 残魂【封印之力】/【童军的力量】：拾取**第 4 颗**童军宝石时，只触发该宝石自身的「首次拾取减诅咒」，始终不触发【童军的力量】的问题。
+    - 根因：「已首拾」集合是**全场共用**、且只按宝石名记录。若别的玩家（或自己此前）已经拾过这颗宝石，`Add` 返回 false，处理函数在「集齐四种」判定**之前就 return** —— 因此客机残魂永远凑不齐。
+    - 修复：首拾与「集齐四种」改为**按玩家**记录（玩家标识 → 宝石集合）；另保留一个全场集合，仅用于【零号守则】的解锁前置。第 4 颗宝石现在会正常触发【童军的力量】。
+- **调整** 【童军的力量】额外减诅咒默认值 **5 → 10**，并新增中英双语提示（`MilesSoul … has collected all Scout Gems and received the 【Scout's Power】 inspiration. / 残魂 … 已集齐童军宝石，获得【童军的力量】激励。`）。
+- **新增** 舞王【狂热舞者】与待皓【脚滑】在每次强制后空翻**前 10 秒**发出**定向**提示（`！即将强制后空翻！/ ! Forced backflip incoming !`）。只有对应职业的玩家本人会收到（新增定向显示事件，其余客机收到即忽略）。
+- **修复** 按住显示键时，职业面板会被 `[职业分配 / Class List]` 标题刷屏、把玩家分配信息挤出屏幕的问题。
+    - 根因：标题被 `lines.Insert(0, title)` 插进了**缓存列表**，每个 GUI 帧插一次 → 缓存每帧长一行。现改为「另建显示列表」拼接标题，不再修改缓存。
+- **调整** **配置文件改为固定中英双语**（不再按游戏语言生成）：
+    - 板块名为「英文+中文」（如 `Explorer先驱`、`General通用`）；
+    - 键名为「英文按中文分段、每段首字母大写 + 中文」（如 `Hypermetabolism-HungerIntervalSeconds高代谢-饥饿间隔`）；
+    - 注释为「英文一行 + 中文一行」。
+    - `职业显示-模式` 取值改为 **1 / 2 / 3**（1=按住、2=按下显示 5 秒、3=按下切换）；`转职-表情` 默认 `A_Scout_Emote_Nono`。
+    - 旧配置文件会在更新后首次启动时**自动备份**（`*.cfg.old-时间戳`）并重新生成，无需手动删除。
+- **调整** 游戏内显示改为中英双语：
+    - 职业面板每行改为 `玩家名：EnglishClass · 中文职业`（如 `Rhys：Qu · 区`）；
+    - 职业效果提示改为「英文一行 + 中文一行」；
+    - 职业介绍板块改为 `Keywords:` + `【英文简介】` + `关键词：` + `【中文简介】` 同时显示。
+- **调整** **头顶职业前缀**在主模组与附属模组中**默认关闭**。
+    - 原因：它每帧、每个玩家都会执行；若同时装有其它的头顶名称模组（如 `AlwaysDisplayPlayerName`），双方每帧互相改写文本，TMP 重建会造成明显掉帧。
+    - 优化（开启时仍生效）：状态组件改为缓存（不再每帧 `GetComponent`）、跳过当前隐藏的名字、职业名走缓存（不再每帧拼字符串）。
+- **调整** 配置键名的英文部分改为**与中文键相同的分段**、每段首字母大写：`Hypermetabolism-HungerIntervalSeconds高代谢-饥饿间隔`（此前为 `hypermetabolismHungerIntervalSeconds高代谢-饥饿间隔`）。**旧配置会在首次启动时自动备份并重建**（配置版本标记已递增）。
+- **调整** 屏幕叠加层的文字**不再加粗**，并在游戏提供更细的无衬线字体时**优先使用**（没有则回退原字体）。英文行更清晰易读；IMGUI 回退路径的标题也改为常规字重。

@@ -25,51 +25,60 @@ namespace PeakNativeUi
         {
             if (_resolved != null) return _resolved;
 
-            // ① 游戏的语言字体重定向器持有的主字体（最关键、最原生的来源）
+            TMP_FontAsset daruma = null;       // 游戏主字体（DarumaDropOne，拉丁字形偏粗）
+            TMP_FontAsset cjk = null;          // 任意「拉丁 + 中文」都齐全的资产（兜底）
+            TMP_FontAsset thin = null;         // 更细 / 更清晰的无衬线字体（优先；见 LooksThin）
+
+            // ① 游戏的语言字体重定向器持有的主字体
             try
             {
                 var swapper = FontFallbackSwapper.instance;
-                if (swapper != null && swapper.mainBaseFont != null && HasCjk(swapper.mainBaseFont))
-                    return _resolved = swapper.mainBaseFont;
+                if (swapper != null && swapper.mainBaseFont != null)
+                    daruma = swapper.mainBaseFont;
             }
             catch { /* 尚未初始化等：继续下一个来源 */ }
 
-            // ② 任意原版头顶名牌的字体（与玩家名同款，必然是可用的原生字体）
-            try
-            {
-                var names = Resources.FindObjectsOfTypeAll<PlayerName>();
-                foreach (var pn in names)
-                {
-                    if (pn == null || pn.text == null) continue;
-                    if (HasCjk(pn.text.font)) return _resolved = pn.text.font;
-                }
-            }
-            catch { }
-
-            // ③ 全量 TMP 字体：优先名字含 Daruma 的原生主字体；并另记一个含中文字形的字体兜底
-            TMP_FontAsset daruma = null;
-            TMP_FontAsset cjk = null;
+            // ② 全量 TMP 资产：挑出「细体」候选与「拉丁 + 中文」兜底；同时记录 Daruma
             try
             {
                 var fonts = Resources.FindObjectsOfTypeAll<TMP_FontAsset>();
                 foreach (var f in fonts)
                 {
-                    if (f == null) continue;
+                    if (f == null || !HasCjk(f)) continue;
+
                     if (daruma == null && f.name != null &&
                         f.name.IndexOf("Daruma", StringComparison.OrdinalIgnoreCase) >= 0) daruma = f;
-                    if (cjk == null && HasCjk(f)) cjk = f;
-                    if (daruma != null && cjk != null) break;
+
+                    // 只有同时能画拉丁字母的资产才能当「整块文本的字体」
+                    if (cjk == null && HasChar(f, 'A')) cjk = f;
+                    if (thin == null && HasChar(f, 'A') && LooksThin(f)) thin = f;
                 }
             }
             catch { }
 
-            if (daruma != null && HasCjk(daruma)) return _resolved = daruma;
+            // ③ 原版头顶名牌的字体（与玩家名同款）——仅在没有更好的候选时使用
+            if (thin == null && cjk == null)
+            {
+                try
+                {
+                    var names = Resources.FindObjectsOfTypeAll<PlayerName>();
+                    foreach (var pn in names)
+                    {
+                        if (pn == null || pn.text == null || pn.text.font == null) continue;
+                        if (!HasCjk(pn.text.font) || !HasChar(pn.text.font, 'A')) continue;
+                        cjk = pn.text.font;
+                        if (thin == null && LooksThin(pn.text.font)) thin = pn.text.font;
+                        break;
+                    }
+                }
+                catch { }
+            }
 
-            // 游戏语言不是中文时，主字体的 fallback 表未必接了中文字体 —— 此时直接用「含中文字形」的资产
-            // （游戏自带 15 种语言，简中资产必在包内），保证中文不出现豆腐块。
+            // ④ 优先细体（英文线条不会过粗、更易读）；否则用任意「拉丁 + 中文」资产；最后 Daruma / TMP 默认
+            if (thin != null) return _resolved = thin;
             if (cjk != null) return _resolved = cjk;
+            if (daruma != null && HasCjk(daruma) && HasChar(daruma, 'A')) return _resolved = daruma;
 
-            // ④ TMP 默认字体（至少是原版风格；无法渲染中文时宁可不用）
             try
             {
                 var def = TMP_Settings.defaultFontAsset;
@@ -78,6 +87,30 @@ namespace PeakNativeUi
             catch { }
 
             return null;
+        }
+
+        /// <summary>名字看起来是「细体 / 无衬线」的字体（排除默认的粗圆体 Daruma）。</summary>
+        private static bool LooksThin(TMP_FontAsset f)
+        {
+            if (f == null || string.IsNullOrEmpty(f.name)) return false;
+            string n = f.name;
+            if (n.IndexOf("Daruma", StringComparison.OrdinalIgnoreCase) >= 0) return false;
+
+            return n.IndexOf("Noto", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("Sans", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("SourceHan", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("Source Han", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("CJK", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("Chinese", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("Hei", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("Gothic", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        /// <summary>该字体（含 fallback 链）能否渲染指定字符。</summary>
+        private static bool HasChar(TMP_FontAsset font, char c)
+        {
+            try { return font != null && font.HasCharacter(c, true); }
+            catch { return false; }
         }
 
         /// <summary>该字体（含其 fallback 链）能否渲染中文字形 —— 用于避免「英文字体画中文变豆腐块」。</summary>
@@ -298,7 +331,7 @@ namespace PeakNativeUi
             canvas.sortingOrder = 32000;   // 压在原版 HUD 之上
             // 刻意不添加 GraphicRaycaster：叠加层只显示、不接收任何输入
 
-            _toast = CreateBlock("Toast", font, rightSide: false, widthFraction: 0.45f, bold: true);
+            _toast = CreateBlock("Toast", font, rightSide: false, widthFraction: 0.45f, bold: false);
             _panel = CreateBlock("ClassPanel", font, rightSide: true, widthFraction: 0.32f, bold: false);
             // 职业介绍面板：跟随在面板下方，宽度略宽（长简介折行更少、整体更矮）
             _intro = CreateBlock("ClassIntro", font, rightSide: true, widthFraction: 0.40f, bold: false);
@@ -395,7 +428,7 @@ namespace PeakNativeUi
 
             var sb = new StringBuilder();
             if (!string.IsNullOrEmpty(title))
-                sb.Append("<color=#FFE666><b>").Append(title).Append("</b></color>");
+                sb.Append("<color=#FFE666>").Append(title).Append("</color>");
             if (lines != null)
             {
                 for (int i = 0; i < lines.Count; i++)

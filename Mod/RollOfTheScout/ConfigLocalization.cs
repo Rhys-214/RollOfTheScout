@@ -1,15 +1,19 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 
 namespace RollOfTheScout
 {
     /// <summary>
-    /// 配置文件的中英双语国际化（按游戏语言择一）。
+    /// 配置文件名称的**固定中英双语**规则（不再随游戏语言变化）。
     ///
-    /// · 游戏语言为中文（简体 / 繁体）→ <see cref="UseEnglish"/> = false：Section / Key / Description 全部使用中文原文；
-    /// · 其它语言 → <see cref="UseEnglish"/> = true：Section 使用英文分类名、Key 使用小驼峰（camelCase）、Description 使用英文。
+    /// · Section：英文分类名在前、中文在后（如 <c>General通用</c>、<c>Explorer先驱</c>）；
+    /// · Key：英文按中文键的段数分段、每段首字母大写，再加中文
+    ///   （如 <c>Hypermetabolism-HungerIntervalSeconds高代谢-饥饿间隔</c>）；
+    /// · Description：英文说明一行、中文说明一行。
     ///
-    /// 翻译表以「中文 Section | 中文 Key」为索引；未收录的条目自动回退为中文原文（保证新增配置项不会失效）。
+    /// 翻译表以「中文 Section | 中文 Key」为索引；未收录的条目自动回退为中文原文。
+    /// <see cref="UseEnglish"/> 仍保留（供其它纯文本 UI 使用），但**不再影响配置文件**。
     /// </summary>
     internal static class ConfigLocalization
     {
@@ -60,15 +64,15 @@ namespace RollOfTheScout
             { "通用|随机分配职业", ("randomAssignClasses", "Whether the host assigns classes randomly. true = weighted random assignment (no class selection screen); false = assign classes in class order.") },
             { "通用|状态轮询间隔", ("statusPollIntervalSeconds", "Interval (seconds) for the host to poll player sync status, used for closed-loop detection of 'Indomitable / Hypermetabolism / Empathy'. Recommended 0.25~1.") },
             { "通用|职业显示-按键", ("classDisplayKey", "Key that shows the current class assignment on the host's screen. Enter a Unity KeyCode name, e.g. Tab, F1, LeftAlt, BackQuote, Mouse2. Note: clients do not have this mod installed, so the panel can only display on the host (host player)'s own screen.") },
-            { "通用|职业显示-模式", ("classDisplayMode", "Display mode of the class assignment panel. HoldToShow = show while the key is held and hide immediately on release; PressToShow = show for 5 seconds after a single press, then auto-hide; ToggleOnPress = each press toggles between show and hide.") },
+            { "通用|职业显示-模式", ("classDisplayMode", "Display mode of the class assignment panel (values 1 / 2 / 3): 1 = show while the key is held and hide immediately on release; 2 = show for 5 seconds after a single press, then auto-hide; 3 = each press toggles between show and hide. Default 1. Legacy text values (HoldToShow / PressToShow / ToggleOnPress, or the Chinese names) are still accepted.") },
             { "通用|法师效果提示", ("mageEffectHint", "Whether to show, in the host screen's top-left notification area, which effect the Mage triggers each time (eases testing and troubleshooting). Default true. The notification looks like 'Mage: XXX triggered [Enhance]', appears at the top-left and disappears after about 8 seconds. The notification only appears on the host (host player)'s own screen; clients without this mod cannot see it. If clients have the addon mod com.peakmodding.RollOfTheScoutClient installed, see 'classDisplayNetworkSync' below.") },
             { "通用|职业显示-网络同步", ("classDisplayNetworkSync", "Whether to broadcast the class assignment and class effect notifications to clients that have the addon mod com.peakmodding.RollOfTheScoutClient installed (so they can display them on their own screens). How it works: the host periodically broadcasts a class snapshot via a Photon custom event (code 197), and broadcasts the notification text on each notification. Clients without the addon mod are completely unaffected (they ignore what they receive), so clients still work with zero installation. Default true. Set to false to fully disable this broadcast (clients will then see no class display).") },
-            { "通用|头顶职业前缀", ("overheadClassPrefix", "Whether to rewrite the overhead player name as '[Class] Nickname', e.g. Alice -> [Explorer] Alice. '[Class]' is colored with that player's skin color when entering the game; the nickname keeps its vanilla color. Warning: the overhead name is per-client local UI, so this switch only affects the names seen on the local screen: host: shows the class from this game's ledger; clients with this mod or the addon mod: show the class broadcast by the host (see 'classDisplayNetworkSync'); clients with no mods installed: see no prefix (still show the vanilla nickname). Default true.") },
+            { "通用|头顶职业前缀", ("overheadClassPrefix", "Whether to rewrite the overhead player name as '[Class] Nickname', e.g. Alice -> [Explorer] Alice. '[Class]' is colored with that player's skin color when entering the game; the nickname keeps its vanilla color. Warning: this runs per frame and per player through the overhead-name refresh patch; if another overhead-name mod is installed at the same time (e.g. AlwaysDisplayPlayerName), both rewrite the text every frame and cause noticeable frame drops. 'Class' is shown as 'English · Chinese'. The overhead name is per-client local UI, so this switch only affects the local screen. Default false (off).") },
             { "通用|转职-启用", ("reclassEnabled", "Master switch for the reclass mechanic. true = players can change class after consuming the 'reclassTriggerItem' below; false = fully disabled. A reclass randomly reassigns a class by weight among other classes that are not yet full; the max number of successful reclasses per player per game is set by 'reclassCount' below; if no class is available (all other classes are full), the attempt has no effect and does not consume a count.") },
             { "通用|转职-触发物品", ("reclassTriggerItem", "Which item triggers a reclass when consumed (enter the item prefab name). Default Mushroom Glow = the weird mushroom. If wrong or empty, the reclass mechanic will not trigger.") },
             { "通用|转职-次数", ("reclassCount", "Max number of successful reclasses per player per game (default 1). Each successful reclass consumes 1; no count is consumed when no class is available. Setting to 0 equals disabling reclass. Resets at the start of each game.") },
             { "通用|转职-表情启用", ("reclassEmoteEnabled", "Whether players may reclass by performing the 'reclassEmote' (default OFF). When enabled, the player performing the emote instantly reclasses once, identical to consuming the trigger item, and SHARES the 'reclassCount' above (each success consumes 1). Only works while the player is alive, not downed and not dead; emotes forcibly played by class effects never trigger it. 'No No' is a high-frequency communication emote, so this is off by default to avoid accidentally consuming the only reclass of the run.") },
-            { "通用|转职-表情", ("reclassEmote", "Emote that triggers the reclass. You may use a display name such as 'No No' (default) or the raw animation name (e.g. A_Scout_Emote_Nono). Case-insensitive; empty disables emote reclass. To avoid conflicts with class effects, this value may NOT be an emote that the host forces (A_Scout_Emote_Dance / Dance1 / Dance2 / BackFlip / PlayDead); if it is, emote reclass is automatically disabled.") },
+            { "通用|转职-表情", ("reclassEmote", "Emote that triggers the reclass. Enter the raw vanilla animation name (default A_Scout_Emote_Nono, i.e. 'No No'). Case-insensitive; empty disables emote reclass. To avoid conflicts with class effects, this value may NOT be an emote that the host forces (A_Scout_Emote_Dance / Dance1 / Dance2 / BackFlip / PlayDead); if it is, emote reclass is automatically disabled.") },
             { "通用|夜晚抵消寒冷", ("nightColdNegate", "Whether to offset the night cold on 'tier 5 and above difficulty' (night adds +2.5 cold every 5 seconds). How it works: this night cold is resolved by vanilla on each player's own client and the host cannot disable it directly, so instead the host periodically adds 'hot' to all living players - in vanilla, hot and cold cancel each other. Only takes effect during 'night + tier >= 5 (or cold night enabled in a custom game) + fewer than 3 checkpoints passed', matching vanilla conditions. Default true (enabled). Set to false to restore vanilla night cold.") },
             { "通用|夜晚抵消寒冷-间隔", ("nightColdNegateIntervalSeconds", "How many seconds between each 'hot' grant (seconds). Default 5, matching the vanilla night cold accumulation pace. Set to 0 or a negative value to disable this effect.") },
             { "通用|夜晚抵消寒冷-量", ("nightColdNegateAmount", "Amount of 'hot' granted each time (0.025 = 2.5 points). Default 0.025: during full night vanilla adds exactly +2.5 cold every 5 seconds (0.005/second), so this default fully offsets it. If affected by other cold sources at the same time, increase as needed.") },
@@ -549,7 +553,7 @@ namespace RollOfTheScout
             { "残魂|野心-饥饿", ("ambitionHunger", "[Ambition] Hunger immediately reduced after each use (0.10 = 10 points). Default 0.10.") },
             { "残魂|野心-额外体力", ("ambitionExtraStamina", "[Ambition] Extra stamina immediately added after each use (0.25 = 25 points). Default 0.25.") },
             { "残魂|野心-首拾诅咒", ("ambitionFirstPickupCurse", "[Ambition] Curse reduced on the first pickup this run (0.05 = 5 points). Default 0.05.") },
-            { "残魂|童军力量-诅咒", ("scoutPowerCurse", "[Scout Power] Curse additionally reduced after all four Scout gem items have been picked up (0.05 = 5 points), and all negative statuses other than curse (including petrify) are cleared. Default 0.05.") },
+            { "残魂|童军力量-诅咒", ("scoutPowerCurse", "[Scout Power] Curse additionally reduced after all four Scout gem items have been picked up (0.10 = 10 points), and all negative statuses other than curse (including petrify) are cleared. Default 0.10.") },
             { "残魂|零号守则-毅力助人", ("ruleZeroPerseveranceHelp", "[Rule Zero] When feeding the Scout's Perseverance to another player who is unconscious (downed but not dead): the petrify added to self by this use is cleared by an equal amount (net change of 0), and this use does not count toward the [Soul Hindrance] counter. Note the three cases (only Perseverance distinguishes them): self-use = Seal Power (-10 petrify / -10 hunger); feeding a non-unconscious other player = no class effect (vanilla petrify gain applies and it still counts); feeding an unconscious player = this entry. Default true.") },
             { "残魂|零号守则-额外体力", ("ruleZeroExtraStamina", "[Rule Zero] Extra stamina added to self when feeding Perseverance to an unconscious (downed but not dead) player, in addition to clearing the petrify added this time by an equal amount (0.30 = 30 points). Default 0.30. Set to 0 to disable.") },
             { "残魂|零号守则-无敌物品", ("ruleZeroInvincibleItem", "[Rule Zero] Invincibility-effect item applied to self when someone becomes unconscious (default FortifiedMilk). Leave empty to apply no invincibility effect (teleport only).") },
@@ -698,22 +702,162 @@ namespace RollOfTheScout
                 || sys == UnityEngine.SystemLanguage.ChineseTraditional;
         }
 
-        /// <summary>中文 Section → 当前语言的 Section（英文语言下未收录则不翻译）。</summary>
+        /// <summary>中文 Section → **固定双语** Section：英文在前、中文在后（如 General通用）。</summary>
         internal static string Section(string zhSection)
         {
-            return UseEnglish && Sections.TryGetValue(zhSection, out string en) ? en : zhSection;
+            if (Sections.TryGetValue(zhSection, out string en)
+                && !string.IsNullOrEmpty(en)
+                && !string.Equals(en, zhSection, StringComparison.Ordinal))
+                return en + zhSection;
+            return zhSection;
         }
 
-        /// <summary>中文 Key → 当前语言的 Key（英文语言下未收录则回退中文）。</summary>
+        /// <summary>
+        /// 中文 Key → **固定双语** Key：英文在前、中文在后。
+        ///
+        /// 英文部分按中文键的 '-' 段数分段，每段首字母大写，例如：
+        ///   高代谢-饥饿间隔 + hypermetabolismHungerIntervalSeconds → Hypermetabolism-HungerIntervalSeconds
+        /// （英文说明开头的 [Tag] 用作第一段的英文名，剩余单词归入后续段）。
+        /// 单段中文键则只把英文首字母大写（modEnabled → ModEnabled）。
+        /// </summary>
         internal static string Key(string zhSection, string zhKey)
         {
-            return UseEnglish && Entries.TryGetValue(Index(zhSection, zhKey), out var e) ? e.Key : zhKey;
+            if (!Entries.TryGetValue(Index(zhSection, zhKey), out var e) || string.IsNullOrEmpty(e.Key)) return zhKey;
+            if (string.Equals(e.Key, zhKey, StringComparison.OrdinalIgnoreCase)) return zhKey;
+            // 英文（按中文分段、每段首字母大写）在前，**中文键名完整保留在后**
+            return BuildBilingualKey(zhKey, e.Key, e.Desc) + zhKey;
         }
 
-        /// <summary>中文 Description → 当前语言的 Description（英文语言下未收录则回退中文）。</summary>
+        /// <summary>英文键名 → 与中文键分段一致的英文（每段首字母大写，段间用 '-'）。</summary>
+        private static string BuildBilingualKey(string zhKey, string enKey, string enDesc)
+        {
+            int segCount = zhKey.Split('-').Length;
+            var words = SplitCamelWords(enKey);
+            if (segCount <= 1 || words.Count <= 1) return Capitalize(enKey);
+
+            // ① 英文说明开头的 [Tag] 即「第一段中文」的英文名（配置表惯例）。
+            int consumed = 0;
+            string tag = ExtractTag(enDesc);
+            if (!string.IsNullOrEmpty(tag))
+            {
+                string tagNorm = NormalizeLetters(tag);
+                string acc = string.Empty;
+                for (int i = 0; i < words.Count; i++)
+                {
+                    acc += words[i].ToLowerInvariant();
+                    if (acc.Length >= tagNorm.Length)
+                    {
+                        if (tagNorm.StartsWith(acc, StringComparison.Ordinal)) consumed = i + 1;
+                        break;
+                    }
+                    if (!tagNorm.StartsWith(acc, StringComparison.Ordinal)) break;
+                }
+
+                if (consumed > 0)
+                {
+                    string acc2 = string.Empty;
+                    for (int i = 0; i < consumed; i++) acc2 += words[i].ToLowerInvariant();
+                    if (!string.Equals(acc2, tagNorm, StringComparison.Ordinal)) consumed = 0;
+                }
+            }
+
+            var segments = new List<string>(segCount);
+            int start = 0;
+            if (consumed > 0)
+            {
+                segments.Add(Capitalize(string.Concat(words.GetRange(0, consumed))));
+                start = consumed;
+            }
+
+            int remainingSegs = segCount - segments.Count;
+            int remainingWords = words.Count - start;
+            if (remainingSegs <= 0 || remainingWords <= 0)
+            {
+                // 极端情况（Tag 吃掉了所有单词）：退回「按段数均分全部单词」
+                segments.Clear();
+                start = 0;
+                remainingSegs = segCount;
+                remainingWords = words.Count;
+            }
+
+            if (remainingSegs == 1)
+            {
+                segments.Add(Capitalize(string.Concat(words.GetRange(start, remainingWords))));
+            }
+            else
+            {
+                int per = (int)Math.Ceiling(remainingWords / (float)remainingSegs);
+                int idx = start;
+                for (int s = 0; s < remainingSegs && idx < words.Count; s++)
+                {
+                    int take = Math.Min(per, words.Count - idx);
+                    segments.Add(Capitalize(string.Concat(words.GetRange(idx, take))));
+                    idx += take;
+                }
+            }
+
+            return string.Join("-", segments.ToArray());
+        }
+
+        private static string Capitalize(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return s;
+            return char.ToUpperInvariant(s[0]) + s.Substring(1);
+        }
+
+        /// <summary>按驼峰 / 数字边界拆分英文键（保留每个单词的首字母大小写）。</summary>
+        private static List<string> SplitCamelWords(string s)
+        {
+            var list = new List<string>();
+            if (string.IsNullOrEmpty(s)) return list;
+
+            int start = 0;
+            for (int i = 1; i < s.Length; i++)
+            {
+                char c = s[i];
+                char p = s[i - 1];
+                bool boundary = char.IsUpper(c) && (char.IsLower(p) || char.IsDigit(p));
+                if (!boundary && char.IsDigit(c) && !char.IsDigit(p)) boundary = true;
+                if (!boundary && char.IsUpper(c) && char.IsUpper(p)
+                    && i + 1 < s.Length && char.IsLower(s[i + 1])) boundary = true;
+                if (!boundary) continue;
+
+                list.Add(s.Substring(start, i - start));
+                start = i;
+            }
+            list.Add(s.Substring(start));
+            return list;
+        }
+
+        /// <summary>取英文说明第一个方括号里的词（如 "[Hypermetabolism] ..." → "Hypermetabolism"）。</summary>
+        private static string ExtractTag(string desc)
+        {
+            if (string.IsNullOrEmpty(desc)) return null;
+            int l = desc.IndexOf('[');
+            if (l < 0) return null;
+            int r = desc.IndexOf(']', l + 1);
+            if (r <= l) return null;
+            return desc.Substring(l + 1, r - l - 1);
+        }
+
+        /// <summary>只保留字母 / 数字并转小写（用于 Tag 与键名的匹配）。</summary>
+        private static string NormalizeLetters(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return string.Empty;
+            var sb = new StringBuilder(s.Length);
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+                if (char.IsLetterOrDigit(c)) sb.Append(char.ToLowerInvariant(c));
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>Description → **固定双语**：英文说明在前、中文说明在后（两行）。</summary>
         internal static string Desc(string zhSection, string zhKey, string zhDescription)
         {
-            return UseEnglish && Entries.TryGetValue(Index(zhSection, zhKey), out var e) ? e.Desc : zhDescription;
+            if (!Entries.TryGetValue(Index(zhSection, zhKey), out var e) || string.IsNullOrEmpty(e.Desc)) return zhDescription;
+            return e.Desc + "\n" + zhDescription;
         }
 
         private static string Index(string zhSection, string zhKey) => zhSection + "|" + zhKey;

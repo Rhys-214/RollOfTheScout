@@ -6,7 +6,7 @@
 
 ## English
 
-Class introduction — applies to the **RollOfTheScout** mod, version **1.0.0** and above.
+Class introduction — applies to the **RollOfTheScout** mod, version **1.0.7** and above.
 
 1. **Explorer**
 - Keywords: Random items each level · One-time faint revive · High hunger drain · Periodic infinite sprint
@@ -184,7 +184,7 @@ Class introduction — applies to the **RollOfTheScout** mod, version **1.0.0** 
     - 【Scout's Initiative】Each use immediately gives −5 petrify, −5 hunger and +5 extra stamina; the first pickup in this run gives −5 curse.
     - 【Scout's Hospitality】Each use (that successfully copies an item) immediately gives −20 petrify, −10 hunger and +20 extra stamina; the first pickup in this run gives −5 curse.
     - 【Scout's Ambition】Each use immediately gives −25 petrify, −10 hunger and +25 extra stamina; the first pickup in this run gives −5 curse.
-    - 【Scout's Strength】After all four of the above Scout gem items have been picked up, an additional −5 curse, all debuffs other than curse are cleared (petrify included), and you immediately gain one invincibility and one sprint.
+    - 【Scout's Strength】After all four of the above Scout gem items have been picked up, an additional −10 curse, all debuffs other than curse are cleared (petrify included), and you immediately gain one invincibility and one sprint.
 - 【Rule Zero】Every 30 s your player count within 30 m (excluding yourself) is checked: for each player, +5 extra stamina; each time you use Scout's perseverance on another fainted player, your petrify does not increase (the petrify that would have been added by that use is immediately cleared by the same amount, and you gain an extra +30 extra stamina), and that use does not count towards 【Hindrance of the Souls】' tally; after you have picked up Scout's perseverance, each time a player faints you immediately gain one invincibility and teleport to the fainted player, and this effect by default has a 10 s trigger cooldown; for each player death, +10 injury to yourself.
 - 【Seal Released】After entering the Nadir and (any player) freeing the Scoutmaster's soul, all debuffs (curse and petrify included) of every player present (including yourself) are immediately cleared, and +100 extra stamina.
 27. **Qu**
@@ -222,7 +222,7 @@ Class introduction — applies to the **RollOfTheScout** mod, version **1.0.0** 
 
 ## 中文
 
-职业介绍·适用于模组童子军的命运之骰RollOfTheScout的v1.0.0版本及以上：
+职业介绍·适用于模组童子军的命运之骰RollOfTheScout的v1.0.7版本及以上：
 1. **先驱**
 - 关键词：每关随机道具、一次性昏迷复活、高饥饿消耗、无限周期加速
     - “开路先锋：每关获得随机道具背包；首次昏迷将完全清除负面复活；【高代谢】迫使你不断管理饥饿与冲刺”
@@ -399,7 +399,7 @@ Class introduction — applies to the **RollOfTheScout** mod, version **1.0.0** 
     - 【童军的进取】每次使用后立即-5石化、-5饥饿、+5额外体力；本局首次拾取时-5诅咒
     - 【童军的盛情】每次使用（且成功复制了物品）后立即-20石化、-10饥饿、+20额外体力；本局首次拾取时-5诅咒
     - 【童军的野心】每次使用后立即-25石化、-10饥饿、+25额外体力；本局首次拾取时-5诅咒
-    - 【童军的力量】上述四种童军宝石道具都拾取过后，额外再-5诅咒，并清除诅咒以外的所有负面状态（包括石化）、立即获得一次无敌效果与加速效果
+    - 【童军的力量】上述四种童军宝石道具都拾取过后，额外再-10诅咒，并清除诅咒以外的所有负面状态（包括石化）、立即获得一次无敌效果与加速效果
 - 【零号守则】每30秒检测一次自身半径30米内的玩家人数（不包括自己）：每有一名玩家，+5额外体力；每次对其他昏迷的玩家使用童军的毅力时，不会使自身石化值增加（因该次使用而增加的石化值会立即等量清除，并再+30额外体力），且该次使用不计入【众魂阻挠】的次数累计；在拾取过童军的毅力后，每有一名玩家昏迷，自身将立即获得一次无敌效果并传送至昏迷玩家处，此效果默认有10秒的触发冷却；每有一名玩家死亡，自身+10损伤
 - 【封印解放】进入天底，并且（有任意玩家）解放童军领队的灵魂后，立即清除在场所有玩家（包括自身）的所有负面状态（包括诅咒与石化）、+100额外体力
 27. **区**

@@ -25,10 +25,60 @@ namespace RollOfTheScout
 
         private Harmony _harmony;
 
+        /// <summary>
+        /// 当前配置文件结构的版本标记。**每次改动 Section / Key 结构时都要改这个值**：
+        /// 标记不一致时，旧 cfg 会被备份（.old-时间戳）并删除，由 BepInEx 重新生成默认文件。
+        /// </summary>
+        private const string ConfigRevision = "2026-10-25-bilingual3";
+
+        /// <summary>
+        /// 自动清理「旧结构」配置文件（在第一次 Bind 之前调用才有效：BepInEx 的 ConfigFile 是惰性加载的）。
+        /// 备份而非直接丢弃，便于用户对照旧值。
+        /// </summary>
+        private static void ResetOutdatedConfig(BepInEx.Configuration.ConfigFile config)
+        {
+            try
+            {
+                string path = config != null ? config.ConfigFilePath : null;
+                if (string.IsNullOrEmpty(path)) return;
+
+                string marker = path + ".rev";
+                string rev = System.IO.File.Exists(marker)
+                    ? System.IO.File.ReadAllText(marker).Trim()
+                    : null;
+
+                if (!System.IO.File.Exists(path))
+                {
+                    // 首次运行：先写标记，避免下次启动把刚生成的新配置当成旧配置删掉。
+                    System.IO.File.WriteAllText(marker, ConfigRevision);
+                    return;
+                }
+
+                if (string.Equals(rev, ConfigRevision, System.StringComparison.Ordinal)) return;
+
+                string backup = path + ".old-" + System.DateTime.Now.ToString("yyyyMMdd-HHmmss");
+                System.IO.File.Move(path, backup);
+                System.IO.File.WriteAllText(marker, ConfigRevision);
+                Log.LogWarning(
+                    $"[RollOfTheScout] 配置文件结构已更新，旧配置已备份为 {System.IO.Path.GetFileName(backup)}，"
+                    + "并将重新生成包含固定中英双语键名 / 注释的默认配置。");
+            }
+            catch (System.Exception e)
+            {
+                // 清理失败不影响启动：BepInEx 仍会以旧文件运行（新键自动补默认值）。
+                Log.LogWarning($"[RollOfTheScout] 检查旧配置文件失败（已忽略）：{e.Message}");
+            }
+        }
+
         private void Awake()
         {
             Log = Logger;
-            // 配置项按游戏语言本地化（见 ConfigLocalization）；绑定到插件自身的 Config，ModConfig 才能读到。
+            // 配置项已改为**固定中英双语**（板块 / 键 / 注释）。旧版 cfg 的键完全不同，直接沿用会读到一堆
+            // 无意义条目、且新键全部缺失 —— 因此在首次 Bind **之前**做一次版本检查：不匹配就备份并删除旧文件，
+            // 让 BepInEx 重新生成默认配置（详见 ResetOutdatedConfig）。
+            ResetOutdatedConfig(Config);
+
+            // 配置项为固定中英双语（见 ConfigLocalization）；绑定到插件自身的 Config，ModConfig 才能读到。
             ModConfig.Initialize(Config);
 
             // 驱动器：所有职业逻辑都跑在它里面，并且只在主机上生效

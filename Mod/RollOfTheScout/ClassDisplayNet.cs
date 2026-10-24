@@ -63,6 +63,12 @@ namespace RollOfTheScout
         /// <summary>Kind：职业「简介」文本表（<c>"code=简介;…"</c>），用途同 <see cref="KindClassKeywords"/>。</summary>
         public const byte KindClassIntro = 5;
 
+        /// <summary>
+        /// Kind：**定向提示**（<c>"ActorNumber\t文本"</c>）—— 只有该 ActorNumber 的客机显示。
+        /// 用于「只有相应职业的玩家才看得到」的提醒（如舞王 / 待皓的强制后空翻预警）。
+        /// </summary>
+        public const byte KindTargetedToast = 6;
+
         /// <summary>关键词 / 简介文本的保底重发间隔（秒）。仅为让中途加入的客机也能收到；文本是静态的，无需频繁发送。</summary>
         public const float ClassTextResendSeconds = 30f;
 
@@ -113,6 +119,14 @@ namespace RollOfTheScout
         public static void BroadcastClassIntro(IList<KeyValuePair<int, string>> codeToIntro)
         {
             SendTextMap(KindClassIntro, codeToIntro);
+        }
+
+        /// <summary>广播一条**只给指定玩家**看的提示（其余客机收到后忽略）。</summary>
+        public static void BroadcastTargetedToast(int actorNumber, string text)
+        {
+            if (!ShouldBroadcast()) return;
+            if (actorNumber <= 0 || string.IsNullOrEmpty(text)) return;
+            Send(KindTargetedToast, actorNumber.ToString() + "\t" + Sanitize(text));
         }
 
         /// <summary>把 <c>"code=文本;…"</c> 形式的文本表发出。</summary>

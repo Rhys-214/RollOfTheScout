@@ -710,5 +710,62 @@ namespace RollOfTheScout
                 default: return "无职业";
             }
         }
+
+        /// <summary>职业数值 → 英文职业名（用于面板 / 广播的「英文 · 中文」双语显示）。</summary>
+        public static string DescribeEnglish(ClassType type)
+        {
+            switch (type)
+            {
+                case ClassType.Explorer: return "Explorer";
+                case ClassType.Leader: return "Leader";
+                case ClassType.Logistician: return "Logistician";
+                case ClassType.Doctor: return "Doctor";
+                case ClassType.Assassin: return "Assassin";
+                case ClassType.Pandora: return "Pandora's Child";
+                case ClassType.Necromancer: return "Necromancer";
+                case ClassType.M: return "M";
+                case ClassType.Savage: return "Savage";
+                case ClassType.Scout: return "Scout";
+                case ClassType.StandardBearer: return "StandardBearer";
+                case ClassType.Dancer: return "Dancer";
+                case ClassType.Daihao: return "Daihao";
+                case ClassType.Saint: return "Saint";
+                case ClassType.Mage: return "Mage";
+                case ClassType.Challenger: return "Challenger";
+                case ClassType.MasterChef: return "MasterChef";
+                case ClassType.Cook: return "Cook";
+                case ClassType.Pacifist: return "Pacifist";
+                case ClassType.Hamster: return "Hamster";
+                case ClassType.Firefighter: return "Firefighter";
+                case ClassType.Narcissist: return "Narcissist";
+                case ClassType.LoneWolf: return "LoneWolf";
+                case ClassType.Gunner: return "Gunner";
+                case ClassType.Band: return "Band";
+                case ClassType.MilesSoul: return "MilesSoul";
+                case ClassType.Qu: return "Qu";
+                case ClassType.Astronaut: return "Astronaut";
+                case ClassType.Langwang: return "Langwang";
+                case ClassType.Programmer: return "Programmer";
+                default: return "None";
+            }
+        }
+
+        // 「英文 · 中文」双语职业名缓存（按职业数值索引，避免每次调用都拼接字符串）。
+        private static readonly string[] _bilingualNames = new string[64];
+
+        /// <summary>职业数值 → 「英文职业名 · 中文职业名」（如 <c>Qu · 区</c>）。</summary>
+        public static string DescribeBilingual(ClassType type)
+        {
+            int code = (int)type;
+            if (code > 0 && code < _bilingualNames.Length && _bilingualNames[code] != null)
+                return _bilingualNames[code];
+
+            string text = code <= 0
+                ? "None · 无职业"
+                : DescribeEnglish(type) + " · " + Describe(type);
+
+            if (code > 0 && code < _bilingualNames.Length) _bilingualNames[code] = text;
+            return text;
+        }
     }
 }

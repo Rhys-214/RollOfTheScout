@@ -16,34 +16,40 @@ namespace RollOfTheScout
         /// <summary>当前语言下「职业介绍」板块的标题前缀（拼在职业名之前）。</summary>
         public static string TitlePrefix
         {
-            get { return ConfigLocalization.UseEnglish ? "[Class Intro] " : "[职业介绍] "; }
+            get { return "[职业介绍 / Class Intro] "; }
         }
 
-        /// <summary>该职业的关键词原文（不带「关键词：」标签）。未知职业返回空字符串。</summary>
+        /// <summary>该职业的关键词原文（中英双语，两行；含 Keywords / 关键词 标签）。未知职业返回空字符串。</summary>
         public static string Keywords(int code)
         {
-            return ConfigLocalization.UseEnglish ? KeywordsEn(code) : KeywordsZh(code);
+            string en = KeywordsEn(code);
+            string zh = KeywordsZh(code);
+            if (string.IsNullOrEmpty(en) && string.IsNullOrEmpty(zh)) return string.Empty;
+            if (string.IsNullOrEmpty(zh)) return "Keywords: " + en;
+            if (string.IsNullOrEmpty(en)) return "关键词：" + zh;
+            return "Keywords: " + en + "\n关键词：" + zh;
         }
 
-        /// <summary>该职业的简介原文（不带「简介：」标签）。未知职业返回空字符串。</summary>
+        /// <summary>该职业的简介原文（中英双语，两行；两行都自带「【名称】」前缀）。未知职业返回空字符串。</summary>
         public static string Intro(int code)
         {
-            return ConfigLocalization.UseEnglish ? IntroEn(code) : IntroZh(code);
+            string en = IntroEn(code);
+            string zh = IntroZh(code);
+            if (string.IsNullOrEmpty(en)) return zh;
+            if (string.IsNullOrEmpty(zh)) return en;
+            return en + "\n" + zh;
         }
 
-        /// <summary>关键词行（形如「关键词：A、B」）。职业未知时返回空字符串。</summary>
+        /// <summary>关键词行（中英双语）。职业未知时返回空字符串。</summary>
         public static string KeywordsLine(int code)
         {
-            string keywords = Keywords(code);
-            if (string.IsNullOrEmpty(keywords)) return string.Empty;
-            return ConfigLocalization.UseEnglish ? "Keywords: " + keywords : "关键词：" + keywords;
+            return Keywords(code);
         }
 
-        /// <summary>简介行（形如「【团队核心】…」，**不再带「简介：」前缀**）。职业未知时返回空字符串。</summary>
+        /// <summary>简介行（中英双语）。职业未知时返回空字符串。</summary>
         public static string IntroLine(int code)
         {
-            string intro = Intro(code);
-            return string.IsNullOrEmpty(intro) ? string.Empty : intro;
+            return Intro(code);
         }
 
         // ---------------------------------------------------------------

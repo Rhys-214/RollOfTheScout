@@ -6,13 +6,14 @@ namespace RollOfTheScout
     /// <summary>
     /// 全部可调参数。只有主机（房主）的配置文件有意义，其他玩家即使安装了本模组也不会生效。
     ///
-    /// 中英双语：按「游戏语言」决定 Section / Key / Description 用中文还是英文（见 <see cref="ConfigLocalization"/>）——
-    /// · 游戏语言为中文（简体 / 繁体）：Section / Key / Description 用中文原文；
-    /// · 其它语言：Section 用英文名、Key 用小驼峰（camelCase）、Description 用英文。
-    /// Section / Key 也必须跟着本地化，因为 PEAKLib.ModConfig 在局内配置界面里显示的正是
-    /// 「Section（分类页签）」与「Key（条目名）」，靠它们界面语言才会切换。
-    /// 配置文件固定为插件自身的 <c>com.peakmodding.RollOfTheScout.cfg</c>（内容语言随游戏语言），
+    /// 中英双语：配置文件**固定为中英双语**（不再随游戏语言变化）——
+    /// Section / Key 由 <see cref="ConfigLocalization"/> 生成为「英文在前、中文在后」，
+    /// Description 为「英文一行 + 中文一行」。
+    /// Section / Key 必须如此，因为 PEAKLib.ModConfig 在局内配置界面里显示的正是
+    /// 「Section（分类页签）」与「Key（条目名）」。
+    /// 配置文件固定为插件自身的 <c>com.peakmodding.RollOfTheScout.cfg</c>，
     /// 必须如此才能被 PEAKLib.ModConfig 枚举到 —— 它只读取各插件的 plugin.Config。
+    /// ⚠ 结构改动后由 <c>Plugin.ResetOutdatedConfig</c> 自动备份并重建旧 cfg（见 ConfigRevision）。
     /// </summary>
     public static class ModConfig
     {
@@ -153,14 +154,13 @@ namespace RollOfTheScout
                     "按哪个键在主机屏幕上显示「当前职业分配情况」。\n" +
                     "填写 Unity 的 KeyCode 名，例如 Tab、F1、LeftAlt、BackQuote、Mouse2。\n" +
                     "注意：客机没有安装本模组，该面板只能显示在主机（房主）自己的屏幕上。");
-                // 该项的「值」也随语言变化：英文配置用 HoldToShow / PressToShow / ToggleOnPress，
-                // 中文配置沿用 按住显示 / 按下显示 / 按下切换；代码对中英两种写法都识别（见 HostClassManager）。
-                ClassListMode = BindL(config, "通用", "职业显示-模式",
-                    ConfigLocalization.UseEnglish ? "HoldToShow" : "按住显示",
-                    "职业分配面板的显示方式：\n" +
-                    "按住显示 = 按住该键时显示，松开立即隐藏；\n" +
-                    "按下显示 = 按一下显示 5 秒后自动隐藏；\n" +
-                    "按下切换 = 每按一次在「显示 / 隐藏」之间切换。");
+                // 该项的「值」固定为 1 / 2 / 3：1=按住显示，2=按下显示 5 秒，3=按下切换（默认 1）。
+                ClassListMode = BindL(config, "通用", "职业显示-模式", "1",
+                    "职业分配面板的显示方式（1 / 2 / 3）：\n" +
+                    "1 = 按住该键时显示，松开立即隐藏；\n" +
+                    "2 = 按一下显示 5 秒后自动隐藏；\n" +
+                    "3 = 每按一次在「显示 / 隐藏」之间切换。\n" +
+                    "默认 1。旧版的文字值（按住显示 / 按下显示 / 按下切换、HoldToShow 等）仍兼容。");
                 MageEffectNotify = BindL(config, "通用", "法师效果提示", true,
                     "是否在主机屏幕左上角提示区，显示法师每次触发的是什么效果。\n" +
                     "默认 true。提示形如「法师：XXX 触发【强化】」，显示在左上角、约 8 秒后消失。\n" +
@@ -172,14 +172,16 @@ namespace RollOfTheScout
                     "原理：主机用 Photon 自定义事件（码 197）周期广播职业快照、并在每次提示时广播该提示文本。\n" +
                     "未安装附属模组的客机完全不受影响（收到即忽略），因此客机仍然零安装可用。\n" +
                     "默认 true。设为 false 可彻底关闭该广播（客机侧将看不到任何职业显示）。");
-                NamePrefix = BindL(config, "通用", "头顶职业前缀", true,
+                NamePrefix = BindL(config, "通用", "头顶职业前缀", false,
                     "是否把「头顶玩家名称」改写成「【职业】昵称」，例如「Rhys」→「【先驱】Rhys」。\n" +
                     "「【职业】」用该玩家进入游戏时的皮肤色着色；「昵称」维持原版颜色不变。\n" +
+                    "⚠ **默认关闭**：该功能由「头顶名称刷新补丁」每帧、每个玩家执行；若同时装有其它的头顶名称模组\n" +
+                    "（例如 AlwaysDisplayPlayerName），双方会每帧互相改写文本，导致明显掉帧。\n" +
                     "⚠ 头顶名称是**每个客户端本地**的 UI，因此本开关只影响**本机屏幕**上看到的名字：\n" +
                     "   · 主机：显示本局账本里的职业；\n" +
                     "   · 装了本模组或附属模组的客机：显示主机广播过来的职业（见「职业显示-网络同步」）；\n" +
                     "   · 未装任何模组的客机：看不到任何前缀（仍显示原版昵称）。\n" +
-                    "默认 true。");
+                    "默认 false（关闭）。");
                 ReclassEnabled = BindL(config, "通用", "转职-启用", true,
                     "转职机制总开关。true=玩家食用下方「转职-触发物品」后可更换职业；false=完全关闭。\n" +
                     "转职会在「当前未占满名额的其他职业」中按权重随机重新分配；\n" +
@@ -198,10 +200,9 @@ namespace RollOfTheScout
                     "并与物品转职**共用**上面的「转职-次数」（每次成功都消耗 1 次）。\n" +
                     "只在玩家**存活、未昏迷、未死亡**时生效；主机为职业效果强制播放的表情不会触发转职。\n" +
                     "注意：「不行不行」是高频沟通表情，默认关闭以避免误触消耗掉本局唯一的转职机会。");
-                ReclassEmoteName = BindL(config, "通用", "转职-表情",
-                    ConfigLocalization.UseEnglish ? "No No" : "不行不行",
-                    "触发转职的表情。可填「不行不行」（默认）这类显示名，也可直接填原版动画名\n" +
-                    "（如 A_Scout_Emote_Nono）。大小写不敏感；留空则表情转职不会触发。\n" +
+                ReclassEmoteName = BindL(config, "通用", "转职-表情", "A_Scout_Emote_Nono",
+                    "触发转职的表情。固定填原版动画名（默认 A_Scout_Emote_Nono，即「不行不行」）。\n" +
+                    "大小写不敏感；留空则表情转职不会触发。\n" +
                     "为避免与职业效果冲突，该值**不允许**是跳舞 / 后空翻 / 装死等会被主机强制播放的表情\n" +
                     "（A_Scout_Emote_Dance / Dance1 / Dance2 / BackFlip / PlayDead），命中时表情转职自动失效。");
                 NightHeatEnabled = BindL(config, "通用", "夜晚抵消寒冷", true,
@@ -2304,9 +2305,9 @@ namespace RollOfTheScout
                     "【童军的野心】每次使用后立即增加的额外体力（0.25 = 25 点）。默认 0.25。");
                 AmbitionFirstCurse = BindL(config, "残魂", "野心-首拾诅咒", 0.05f,
                     "【童军的野心】本局第一次拾取时降低的诅咒（0.05 = 5 点）。默认 0.05。");
-                PowerCurse = BindL(config, "残魂", "童军力量-诅咒", 0.05f,
-                    "【童军的力量】四种童军宝石道具都拾取过后，额外降低的诅咒（0.05 = 5 点），\n" +
-                    "并清除「诅咒以外」的所有负面状态（包括石化）。默认 0.05。");
+                PowerCurse = BindL(config, "残魂", "童军力量-诅咒", 0.10f,
+                    "【童军的力量】四种童军宝石道具都拾取过后，额外降低的诅咒（0.10 = 10 点），\n" +
+                    "并清除「诅咒以外」的所有负面状态（包括石化）。默认 0.10。");
 
                 // ---------------- 零号守则 ----------------
                 RuleZeroHealAssist = BindL(config, "残魂", "零号守则-毅力助人", true,
