@@ -18,7 +18,7 @@
 - **Host-screen UI**: a class-assignment panel plus effect notifications (toasts).
 - **Overhead class prefix**: shows `【Class】Nickname` above players (drawn locally on each client).
 - **Optional host→client broadcast** (Photon custom event `197`): players with the companion **client display mod** installed can see class info on **their own screen**.
-- **Fully configurable**, and the config file is **bilingual**: Chinese for a Chinese game language, English for every other language.
+- **Fully configurable**, and the config file is **bilingual**.
 
 ### Requirements
 
@@ -129,7 +129,7 @@ Welcome to join the PEAK community group ~ (QQ group: **814891614**; mod updates
 - **主机屏幕 UI**：职业分配面板 + 效果提示（Toast）。
 - **头顶职业前缀**：在玩家头顶显示「【职业】昵称」（各客户端本地绘制）。
 - **可选的主机→客机广播**（Photon 自定义事件 `197`）：装了**配套客机显示模组**的玩家可在**自己屏幕**上看到职业信息。
-- **全部可配置**，且配置文件为**中英双语**：游戏语言为中文时用中文配置，其它语言一律使用英文。
+- **全部可配置**，且配置文件为**中英双语**。
 
 ### 环境要求
 
