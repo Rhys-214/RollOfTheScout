@@ -659,17 +659,35 @@ namespace RollOfTheScout
         }
 
         /// <summary>
+        /// 抽取随机数用的**模组私有** <see cref="System.Random"/>。
+        ///
+        /// 刻意不用 <c>UnityEngine.Random</c>：它是全局状态，任何第三方模组调用
+        /// <c>Random.InitState</c> / 在同一时刻反复取数都会影响抽取结果；私有的伪随机源
+        /// 保证「神启」每次都独立抽取，不会出现「固定获得同一件物品」。
+        /// </summary>
+        private static readonly System.Random MysticalRng =
+            new System.Random(System.Guid.NewGuid().GetHashCode());
+
+        /// <summary>已经打印过「物品池解析结果」的配置原文（配置改变前不重复打印）。</summary>
+        private static string _mysticalPoolLoggedRaw;
+
+        /// <summary>
         /// 随机挑一件「神秘物品」预制体。
         /// 优先使用配置的「神启-物品池」白名单（等概率抽取）；
         /// 白名单留空时才退化为「按原版 Mystical 标签筛选」——
         /// 注意原版标签会把未实装物品（例如 ClimbingChalk）也算进来，故默认使用白名单。
+        ///
+        /// 白名单**非空但全部无法解析**（例如键名写错 / 使用了全角分隔符以外的特殊符号）时，
+        /// 不再直接返回 null（那会让神启「一件都不发」），而是退回 Mystical 标签随机并打印一次警告。
         /// </summary>
         public static Item PickRandomMysticalPrefab()
         {
-            var pool = WeightedPicker.ParseList(ModConfig.Leader.DivineItemPool.Value);
+            string raw = ModConfig.Leader.DivineItemPool.Value;
+            var pool = WeightedPicker.ParseList(raw);
             if (pool.Count > 0)
             {
                 var whitelist = new List<Item>();
+                var missing = new List<string>();
                 foreach (var name in pool)
                 {
                     if (ItemDatabase.TryGetItem(name, out Item item) && item != null)
@@ -678,11 +696,29 @@ namespace RollOfTheScout
                     }
                     else
                     {
-                        Plugin.Log.LogWarning($"[HostApi] 神启物品池中未找到物品，已跳过：{name}");
+                        missing.Add(name);
                     }
                 }
-                if (whitelist.Count == 0) return null;
-                return whitelist[UnityEngine.Random.Range(0, whitelist.Count)];
+
+                if (whitelist.Count > 0)
+                {
+                    if (!string.Equals(_mysticalPoolLoggedRaw, raw, System.StringComparison.Ordinal))
+                    {
+                        _mysticalPoolLoggedRaw = raw;
+                        Plugin.Log.LogInfo(
+                            $"[HostApi] 神启物品池：{whitelist.Count} 项有效 = {string.Join(", ", NamesOf(whitelist))}"
+                            + (missing.Count > 0 ? $"（{missing.Count} 项未找到，已跳过：{string.Join(", ", missing)}）" : ""));
+                    }
+                    return whitelist[MysticalRng.Next(whitelist.Count)];
+                }
+
+                if (!string.Equals(_mysticalPoolLoggedRaw, raw, System.StringComparison.Ordinal))
+                {
+                    _mysticalPoolLoggedRaw = raw;
+                    Plugin.Log.LogWarning(
+                        $"[HostApi] 神启物品池中的 {pool.Count} 个名字全部无法解析（{string.Join(", ", missing)}），" +
+                        "本次改用「原版 Mystical 标签」随机抽取。请检查配置「神启-物品池」。");
+                }
             }
 
             var database = SingletonAsset<ItemDatabase>.Instance;
@@ -699,7 +735,18 @@ namespace RollOfTheScout
             }
             if (candidates.Count == 0) return null;
 
-            return candidates[UnityEngine.Random.Range(0, candidates.Count)];
+            return candidates[MysticalRng.Next(candidates.Count)];
+        }
+
+        /// <summary>取一批物品预制体的名字（仅用于日志）。</summary>
+        private static List<string> NamesOf(List<Item> items)
+        {
+            var names = new List<string>(items.Count);
+            for (int i = 0; i < items.Count; i++)
+            {
+                if (items[i] != null) names.Add(items[i].name);
+            }
+            return names;
         }
 
         /// <summary>

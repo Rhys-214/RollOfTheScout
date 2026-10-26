@@ -218,3 +218,37 @@
     - 优化（开启时仍生效）：状态组件改为缓存（不再每帧 `GetComponent`）、跳过当前隐藏的名字、职业名走缓存（不再每帧拼字符串）。
 - **调整** 配置键名的英文部分改为**与中文键相同的分段**、每段首字母大写：`Hypermetabolism-HungerIntervalSeconds高代谢-饥饿间隔`（此前为 `hypermetabolismHungerIntervalSeconds高代谢-饥饿间隔`）。**旧配置会在首次启动时自动备份并重建**（配置版本标记已递增）。
 - **调整** 屏幕叠加层的文字**不再加粗**，并在游戏提供更细的无衬线字体时**优先使用**（没有则回退原字体）。英文行更清晰易读；IMGUI 回退路径的标题也改为常规字重。
+
+## 1.0.8
+
+### English
+
+- **Fixed** **Emote reclass** did not work for anyone (host or client) even with the option enabled; only the consumable-item reclass worked.
+    - Root cause: "class effects force an emote" was implemented with a **global suppression counter**. The host increments it while broadcasting a forced emote and decrements it afterwards; once that counter is left above zero for any reason, **every** player's emote reclass is silently blocked for the rest of the run. The counter could also block real emotes if a forced-emote callback was delivered later than the decrement.
+    - Fix: suppression is now an **exact match** on `(target character ViewID, emote name)` with the previous values restored in `finally`, so no suppression state can leak. Emote names are compared after normalisation (prefix, case, underscore and `NoNo` / `Nope` aliases are all treated as the same emote).
+    - Diagnostics: a new one-time log per observed emote prints the emote name **and** whether it matches the configured reclass emote; a second log at the start of each run prints the **effective** `reclassEmoteEnabled` / `reclassEmote` / `reclassCount` values, so a stale config can be spotted immediately.
+- **Fixed** **Class intro could show another class's description** (usually after a reclass: the new class name in the title was correct, but the description was **M's**).
+    - Root cause: `ClassType.M = 8` and `ClassType.Savage = 9`, but the intro table had **case 8 and case 9 swapped**. A Savage (9) therefore rendered M's description (and vice versa). Fixed in both the main mod and the client addon.
+- **Fixed** Leader 【Divine Inspiration】 always granted the same mystical item (e.g. Ancient Idol) in multiplayer instead of a random item from the configured pool, while single-player worked.
+    - The draw used the **global `UnityEngine.Random`**, which is shared with the game and every other mod. The pool parser also only recognised half-width commas — a full-width comma `，` turned the whole value into one unknown name, and an all-invalid pool silently returned "no item". The draw is now a mod-private `System.Random` seeded per process; the parser accepts `,` `，` `、` `;` and newlines; and an all-invalid pool falls back to the vanilla `Mystical`-tag random with a one-time warning instead of granting nothing. The resolved pool and the item actually picked are logged once per config change for future diagnosis.
+- **Fixed** Incompatibility with **Piggyback** (`nakazora.peak-piggyback`): in a multiplayer room nobody could carry an alive, non-passed-out player.
+    - Root cause: the carry watchdog treated "the carried player is not passed out" as a stale state and broadcast the vanilla `RPCA_Drop` about 0.5 s after the carry starts — which is exactly what Piggyback does by design.
+    - Fix: the watchdog now records whether the carried player **was ever downed during this carry** and only drops an awake player if they had been downed in the same carry (the original "woke up while carried" fix). A pure awake carry is left untouched. When Piggyback is detected (assembly name / plugin GUID / its config file), the watchdog additionally never drops on "woke up"; only death, the carrier being downed, or the carrier disappearing still triggers a cleanup.
+- **Performance** (effects unchanged) **Emote handling is now allocation-free in steady state**: dance-emote names and the reclass-emote config are parsed once per config change, the reclass match uses a fast ordinal comparison, 【Dance Youth】 checks its cooldown before scanning players, the nearby-player list is no longer allocated, and rooms without a Dancer skip repeated emotes entirely. This matters because a Dancer spams emotes and 【Cheer】 turns one emote into N forced emotes; the diagnostic logs still fire only once per distinct emote name.
+- **Changed** **The class intro panel moved from below the class list to the top-left corner**, so it can no longer be pushed off-screen when a large lobby makes the class panel very tall. While it is visible, the top-left notifications (toasts) are temporarily shifted below it to avoid overlap, then return to the top-left as soon as the panel closes. The client addon uses the same layout.
+
+### 中文
+
+- **修复** 即使开启了表情转职，**所有玩家**（主机与客机）做「不行不行」表情都无法转职，只有食用转职物品可以。
+    - 根因：「职业效果强制播放表情」用的是**全局抑制计数**：主机广播强制表情时 +1、播完 -1；一旦该计数因任何原因没有减回 0，本局内**所有人**的表情转职都会被静默阻止。此外若强制表情的回调晚于减计数到达，也会误伤玩家自己做的表情。
+    - 修复：抑制改为**精确匹配 `(目标角色 ViewID, 表情名)`**，并在 `finally` 中恢复前后值，不可能残留抑制状态；表情名比较前先归一化（前缀、大小写、下划线，以及 `NoNo` / `Nope` 等别名都视为同一表情）。
+    - 诊断：新增「每个新表情只打印一次」的日志，直接标出该表情名**是否匹配**配置的转职表情；每局开始时再打印一次**实际生效**的 `转职-表情启用` / `转职-表情` / `转职-次数`，配置没读对可一眼看出。
+- **修复** **职业简介板块有时显示成其他职业的简介**（多数发生在转职后：新职业标题正确，简介却显示成 **M** 的简介）。
+    - 根因：`ClassType.M = 8`、`ClassType.Savage = 9`，但简介表的 **case 8 / case 9 写反了** —— 野人（9）因此显示 M 的简介（反之亦然）。主模组与附属模组均已修正。
+- **修复** 领袖【神启】在联机中额外神秘物品**固定为同一件**（如古老玩偶），而非从配置物品池随机；单人离线却正常。
+    - 抽取原来使用**全局 `UnityEngine.Random`**，与游戏及其它模组共用同一状态；物品池解析也只认半角逗号 —— 中文输入法的全角逗号「，」会把整串当成一个物品名，全部无法解析时又静默返回「不发放」。现改为模组私有的 `System.Random`（每进程独立种子）；解析同时接受 `,` `，` `、` `;` 与换行；全部无效时退回「原版 Mystical 标签」随机并只警告一次，不再一件都不发。解析出的物品池与实际抽中物品会在配置变化后打印一次，便于后续排查。
+- **修复** 与 **Piggyback**（`nakazora.peak-piggyback`）不兼容：联机房间内所有玩家都无法背起**未昏迷的存活玩家**。
+    - 根因：背人自愈把「被背者未昏迷」一律当作异常，背起约 0.5 秒后由主机广播原版 `RPCA_Drop` 强制拆散 —— 而这正是 Piggyback 的设计功能（允许背起清醒玩家）。
+    - 修复：背人自愈现在记录「**本次背人期间被背者是否曾昏迷 / 死亡**」，只有经历过昏迷的被背者苏醒后才代为放下（保留原「背上苏醒仍吸附」的修复）；全程清醒的背人不再干预。检测到 Piggyback（程序集名 / 插件 GUID / 其配置文件任一命中）时，连「昏迷后苏醒」也不再拆散，只在被背者死亡、背人者倒地、背人者消失时清理。
+- **性能**（效果不变）**表情处理热路径改为稳态零分配**：跳舞动作名与转职表情配置只在配置变化时解析一次；转职匹配走无分配的快路径；【舞动青春】把冷却检查提前到扫描玩家之前；不再为「全场欢呼」分配半径内角色列表；房间内没有舞王时重复表情直接丢弃。舞王会高频连续做表情、且【全场欢呼】会把一条表情放大成 N 条，因此这条优化对实际帧率有意义。诊断日志仍只在每个**不同**表情名首次出现时打印一次。
+- **调整** **职业介绍板块从职业分配面板下方移至屏幕左上角**：人数较多、右上角面板很长时，介绍板块不再被挤出屏幕。该板块显示期间，原本在左上角的提示信息会**临时下移到它下方**，避免重叠；面板关闭后提示立即回到左上角。附属模组采用相同布局。

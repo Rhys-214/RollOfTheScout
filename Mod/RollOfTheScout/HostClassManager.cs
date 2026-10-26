@@ -50,35 +50,62 @@ namespace RollOfTheScout
         private const string EmoteNoNo = "A_Scout_Emote_Nono";
 
         /// <summary>
-        /// 「职业效果强制播放表情」的抑制计数。大于 0 时，期间收到的表情 RPC **不参与表情转职判定**。
+        /// 「职业效果强制播放表情」的**精确识别**：强制播放期间记录「目标角色 ViewID + 表情名」，
+        /// 之后收到的表情 RPC 若与这两者同时相同，就不参与表情转职判定。
         ///
-        /// 背景：舞王【全场欢呼】/ 待皓【脚滑】等效果由主机直接调用
-        /// <c>RPCA_PlayRemove(RpcTarget.All)</c> 强制播放表情；主机作为发送方会**同步收到同一条 RPC**，
-        /// 与玩家本人自愿做表情走的是同一个回调，无法从入口区分。因此在强制调用前后增减该计数，
-        /// 保证「职业效果优先」：即使配置的转职表情与强制表情重名，也不会误触发转职。
-        /// 用计数而非 bool，避免多个强制表情嵌套调用时提前复位。
+        /// 背景：舞王【全场欢呼】等效果由主机直接调用 <c>RPCA_PlayRemove(RpcTarget.All)</c>
+        /// 强制播放表情；主机作为发送方会同步收到同一条 RPC，与玩家本人自愿做表情走同一个回调。
+        /// 旧实现用「计数 &gt; 0 即全抑制」，一旦计数因异常没有减回就会**永久**阻止所有人的表情转职
+        /// （实测反馈：开启表情转职后全员做「不行不行」都不生效）。这里改成精确匹配 + 前后值恢复，
+        /// 既不会误伤任何真实表情，也不可能残留抑制状态。
         /// </summary>
-        private int _suppressReclassEmote;
+        private int _forcedEmoteViewId;
+        private string _forcedEmoteName;
 
         /// <summary>已经提示过「配置的转职表情与职业强制表情冲突」的配置值（避免每次表情都刷日志）。</summary>
         private string _reclassEmoteWarnedRaw;
 
-        /// <summary>
-        /// 该表情是否就是配置的「转职表情」。
-        ///
-        /// · 配置值既支持显示名（默认「不行不行」），也支持直接填原版动画名（如 <c>A_Scout_Emote_Nono</c>），大小写不敏感；
-        /// · 为落实「职业效果优先」，若配置值等于任何会被主机**强制播放**的表情
-        ///   （跳舞 / 后空翻 / 装死），则视为无效配置、永不触发，并只提示一次。
-        /// </summary>
-        private bool IsReclassEmote(string emoteName)
+        // ---- 表情相关配置的解析缓存（只在配置原文变化时重建一次） ----
+        // 舞王会高频连续做表情，且【全场欢呼】会让周围玩家一起做表情（一条表情 RPC 变成 N 条）。
+        // 因此每次表情都 ParseList / 拼字符串会造成不必要的分配，这里全部改为缓存 + 无分配比较。
+
+        /// <summary>「舞王-跳舞动作名」配置原文（变化时才重新解析）。</summary>
+        private string _danceNamesRaw;
+        /// <summary>解析后的跳舞动作名列表（复用同一实例，避免每次表情都分配）。</summary>
+        private readonly List<string> _danceNames = new List<string>();
+        /// <summary>列表第一项（强制跳舞用），随列表一起更新。</summary>
+        private string _danceFirstName;
+
+        /// <summary>「转职-表情」配置原文 / 解析后的动画名 / 归一化名 / 是否与强制表情冲突。</summary>
+        private string _reclassCfgRaw;
+        private string _reclassResolved;
+        private string _reclassNormalized;
+        private bool _reclassBlocked;
+
+        /// <summary>按需刷新「跳舞动作名」缓存（配置原文变化才重新解析，常态零分配）。</summary>
+        private void RefreshDanceNames()
+        {
+            string raw = ModConfig.Dancer.DanceEmoteNames.Value;
+            if (string.Equals(raw, _danceNamesRaw, System.StringComparison.Ordinal)) return;
+
+            _danceNamesRaw = raw;
+            _danceNames.Clear();
+            _danceNames.AddRange(WeightedPicker.ParseList(raw));
+            _danceFirstName = _danceNames.Count > 0 ? _danceNames[0] : null;
+        }
+
+        /// <summary>按需刷新「转职-表情」缓存（配置原文变化才重新解析 / 归一化 / 判定冲突，常态零分配）。</summary>
+        private void RefreshReclassEmoteConfig()
         {
             string raw = ModConfig.General.ReclassEmoteName.Value;
-            if (string.IsNullOrWhiteSpace(raw)) return false;
+            if (string.Equals(raw, _reclassCfgRaw, System.StringComparison.Ordinal)) return;
 
-            string target = ResolveEmoteName(raw);
-            if (string.IsNullOrEmpty(target)) return false;
+            _reclassCfgRaw = raw;
+            _reclassResolved = ResolveEmoteName(raw);
+            _reclassNormalized = NormalizeEmoteName(_reclassResolved);
+            _reclassBlocked = !string.IsNullOrEmpty(_reclassResolved) && IsForcedEmoteName(_reclassResolved);
 
-            if (IsForcedEmoteName(target))
+            if (_reclassBlocked)
             {
                 if (!string.Equals(_reclassEmoteWarnedRaw, raw))
                 {
@@ -87,10 +114,63 @@ namespace RollOfTheScout
                         $"[RollOfTheScout] 表情转职：配置的「转职-表情」= {raw} 与职业效果强制播放的表情冲突，" +
                         $"为免误触发转职，本次配置**不会**生效（职业效果优先）。请改填「不行不行」等非强制表情。");
                 }
-                return false;
+            }
+            else
+            {
+                _reclassEmoteWarnedRaw = null;
+            }
+        }
+
+        /// <summary>
+        /// 该表情是否就是配置的「转职表情」。
+        ///
+        /// · 配置值既支持显示名（默认「不行不行」），也支持直接填原版动画名（如 <c>A_Scout_Emote_Nono</c>），大小写不敏感；
+        /// · 为落实「职业效果优先」，若配置值等于任何会被主机**强制播放**的表情
+        ///   （跳舞 / 后空翻 / 装死），则视为无效配置、永不触发，并只提示一次。
+        ///
+        /// 性能：配置解析结果已缓存；与配置动画名完全一致的**快路径不做任何分配**，
+        /// 只有名称写法不同（下划线 / 空格 / 别名）时才走一次归一化的慢路径。
+        /// </summary>
+        private bool IsReclassEmote(string emoteName)
+        {
+            RefreshReclassEmoteConfig();
+            if (string.IsNullOrEmpty(_reclassResolved)) return false;
+            if (_reclassBlocked) return false;
+
+            if (string.Equals(emoteName, _reclassResolved, System.StringComparison.OrdinalIgnoreCase)) return true;
+
+            // 兼容原版可能的表情改名：NoNo / No_No / Nope 等都视为「不行不行」
+            string n = NormalizeEmoteName(emoteName);
+            return string.Equals(n, _reclassNormalized, System.StringComparison.Ordinal)
+                || (IsNoNoEmote(n) && IsNoNoEmote(_reclassNormalized));
+        }
+
+        /// <summary>
+        /// 把表情名归一化为「去掉 <c>A_Scout_Emote_</c> 前缀与全部分隔符、小写」的形式，
+        /// 从而不受大小写 / 下划线 / 空格差异影响（如 <c>A_Scout_Emote_No_No</c> → <c>nono</c>）。
+        /// </summary>
+        private static string NormalizeEmoteName(string emoteName)
+        {
+            if (string.IsNullOrEmpty(emoteName)) return string.Empty;
+
+            var sb = new System.Text.StringBuilder(emoteName.Length);
+            for (int i = 0; i < emoteName.Length; i++)
+            {
+                char c = emoteName[i];
+                if (char.IsLetterOrDigit(c)) sb.Append(char.ToLowerInvariant(c));
             }
 
-            return string.Equals(emoteName, target, System.StringComparison.OrdinalIgnoreCase);
+            string n = sb.ToString();
+            const string prefix = "ascoutemote";
+            if (n.StartsWith(prefix, System.StringComparison.Ordinal) && n.Length > prefix.Length)
+                n = n.Substring(prefix.Length);
+            return n;
+        }
+
+        /// <summary>归一化后的名字是否属于「不行不行」一族（原版改名时的兜底）。</summary>
+        private static bool IsNoNoEmote(string normalized)
+        {
+            return normalized == "nono" || normalized == "nope" || normalized == "no";
         }
 
         /// <summary>把配置里的表情名解析为原版动画名：显示名「不行不行」/「No No」→ <c>A_Scout_Emote_Nono</c>，其余原样使用。</summary>
@@ -107,20 +187,20 @@ namespace RollOfTheScout
             return name;
         }
 
-        /// <summary>该动画名是否属于「主机会为职业效果强制播放」的表情（这些名字禁止用作转职表情）。</summary>
-        private static bool IsForcedEmoteName(string emoteName)
+        /// <summary>
+        /// 该动画名是否属于「主机会为职业效果强制播放」的表情（这些名字禁止用作转职表情）。
+        /// 仅在配置变化时调用一次（见 <see cref="RefreshReclassEmoteConfig"/>），因此归一化开销可忽略。
+        /// </summary>
+        private bool IsForcedEmoteName(string emoteName)
         {
-            if (string.IsNullOrEmpty(emoteName)) return false;
-            if (emoteName.Equals("A_Scout_Emote_BackFlip", System.StringComparison.OrdinalIgnoreCase)) return true;
-            if (emoteName.Equals("A_Scout_Emote_PlayDead", System.StringComparison.OrdinalIgnoreCase)) return true;
-            if (emoteName.Equals("A_Scout_Emote_Dance", System.StringComparison.OrdinalIgnoreCase)) return true;
-            if (emoteName.Equals("A_Scout_Emote_Dance1", System.StringComparison.OrdinalIgnoreCase)) return true;
-            if (emoteName.Equals("A_Scout_Emote_Dance2", System.StringComparison.OrdinalIgnoreCase)) return true;
+            string n = NormalizeEmoteName(emoteName);
+            if (string.IsNullOrEmpty(n)) return false;
+            if (n == "backflip" || n == "playdead"
+                || n == "dance" || n == "dance1" || n == "dance2") return true;
 
             // 强制跳舞用的是配置「舞王-跳舞动作名」的第一项，也要一并排除
-            string forcedDance = FirstDanceEmoteName();
-            return !string.IsNullOrEmpty(forcedDance)
-                && emoteName.Equals(forcedDance, System.StringComparison.OrdinalIgnoreCase);
+            string forcedDance = NormalizeEmoteName(FirstDanceEmoteName());
+            return !string.IsNullOrEmpty(forcedDance) && string.Equals(n, forcedDance, System.StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -130,7 +210,7 @@ namespace RollOfTheScout
         /// · 模组 / 转职 / 表情转职开关均开启；
         /// · 是配置的转职表情（只看 <c>emoteName</c>，**不看 <c>succeeded</c>** —— 后者是原版随机值）；
         /// · 做表情的玩家**本人存活**（非死亡、非昏迷）；
-        /// · 该表情不是主机为职业效果强制播放的（<see cref="_suppressReclassEmote"/>）。
+        /// · 该表情不是主机为职业效果**刚刚**强制播放的同一条表情（见 <see cref="_forcedEmoteViewId"/>）。
         /// 触发后与物品转职走同一实现，**共用转职次数**与去重窗口。
         /// </summary>
         private void OnReclassEmotePlayed(Character character, string emoteName)
@@ -140,7 +220,17 @@ namespace RollOfTheScout
             if (!ModConfig.General.Enabled.Value) return;
             if (!ModConfig.General.ReclassEmoteEnabled.Value) return;
 
-            if (_suppressReclassEmote > 0) return;   // 职业效果的强制表情优先
+            // 职业效果强制表情优先：只跳过「同一个角色 + 同一个表情」这一条强制回调，
+            // 不再用全局计数（旧实现一旦计数没减回就会永久阻止所有人的表情转职）。
+            if (_forcedEmoteViewId != 0
+                && character.photonView != null
+                && character.photonView.ViewID == _forcedEmoteViewId
+                && string.Equals(NormalizeEmoteName(emoteName), NormalizeEmoteName(_forcedEmoteName),
+                    System.StringComparison.Ordinal))
+            {
+                return;
+            }
+
             if (IsDead(character)) return;            // 必须存活：非死亡、非昏迷
             if (!IsReclassEmote(emoteName)) return;
 
@@ -1115,6 +1205,12 @@ namespace RollOfTheScout
         /// <summary>强制后空翻预警（中英双语；**只发给对应职业的玩家本人**，见 ShowToastTargeted）。</summary>
         private const string BackflipWarnText = "！即将强制后空翻！\n! Forced backflip incoming !";
         private GUIStyle _toastStyle;
+
+        /// <summary>
+        /// IMGUI 回退路径：「职业介绍」板块的底边（0 = 本帧未绘制）。
+        /// 介绍板块在左上角，提示层需据此临时下移，避免两者重叠。
+        /// </summary>
+        private float _imguiIntroBottom;
 
         /// <summary>
         /// 提示队列的「内容版本号」：内容（增/删/清空）变化时自增。
@@ -2122,6 +2218,14 @@ namespace RollOfTheScout
             _classListPressUntil = 0f;
             _lastNewLevelTime = Time.time;
             Plugin.Log.LogInfo($"[RollOfTheScout] 检测到新的一局开始，共 {characters.Count} 名角色。");
+
+            // 表情转职的「生效配置」开局打印一次：便于确认配置是否真的被读到
+            // （旧 cfg 的键名与新版不同时，BepInEx 会静默使用默认值，玩家会误以为已开启）。
+            Plugin.Log.LogInfo(
+                $"[RollOfTheScout] 表情转职：启用 = {ModConfig.General.ReclassEmoteEnabled.Value}，" +
+                $"表情 = 「{ModConfig.General.ReclassEmoteName.Value}」" +
+                $"（转职总开关 = {ModConfig.General.ReclassEnabled.Value}，" +
+                $"次数 = {ModConfig.General.ReclassCount.Value}）。");
         }
 
         private void EndRun()
@@ -9020,6 +9124,16 @@ namespace RollOfTheScout
             if (!_inRun) return;
             if (!ModConfig.General.Enabled.Value) return;
 
+            // 性能：舞王会高频连续做表情（还会让周围玩家一起做）。
+            // 本局既没有舞王、也没开表情转职时，**重复**表情直接丢弃；
+            // 每个新表情名仍会走一次下面的观测日志，诊断信息不丢。
+            if (!_ledger.HasClassInRoom(ClassType.Dancer)
+                && !ModConfig.General.ReclassEmoteEnabled.Value
+                && _observedEmotes.Contains(emoteName))
+            {
+                return;
+            }
+
             bool isDance = IsDanceEmote(emoteName);
             LogObservedEmote(dancer, emoteName, isDance);
 
@@ -9028,6 +9142,9 @@ namespace RollOfTheScout
             OnReclassEmotePlayed(dancer, emoteName);
 
             if (!isDance) return;
+
+            // 无舞王时，「舞动青春」与「全场欢呼」都不会有任何受益者，直接跳过扫描。
+            if (!_ledger.HasClassInRoom(ClassType.Dancer)) return;
 
             // 【全场欢呼】：自己（舞王）跳舞时，强制半径内的所有其他玩家一起跳舞
             if (_ledger.GetClass(dancer) == ClassType.Dancer)
@@ -9039,34 +9156,48 @@ namespace RollOfTheScout
             ApplyDanceYouth(dancer);
         }
 
-        /// <summary>该表情动作名是否算作「跳舞」。见配置「跳舞动作名」。</summary>
-        private static bool IsDanceEmote(string emoteName)
+        /// <summary>
+        /// 该表情动作名是否算作「跳舞」。见配置「跳舞动作名」。
+        /// 名单解析结果按配置原文缓存（舞王高频做表情时不再每次 ParseList 分配列表）。
+        /// </summary>
+        private bool IsDanceEmote(string emoteName)
         {
             if (string.IsNullOrEmpty(emoteName)) return false;
 
-            foreach (var name in WeightedPicker.ParseList(ModConfig.Dancer.DanceEmoteNames.Value))
+            RefreshDanceNames();
+            for (int i = 0; i < _danceNames.Count; i++)
             {
-                if (string.Equals(name, emoteName, System.StringComparison.OrdinalIgnoreCase)) return true;
+                if (string.Equals(_danceNames[i], emoteName, System.StringComparison.OrdinalIgnoreCase)) return true;
             }
 
             // 兜底：名字里含 "dance" 的动画一律视作跳舞，避免用户没填对名字时完全失效
             return emoteName.IndexOf("dance", System.StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        /// <summary>配置里第一个「跳舞动作名」，用于主机强制玩家跳舞；未配置则返回 null。</summary>
-        private static string FirstDanceEmoteName()
+        /// <summary>配置里第一个「跳舞动作名」，用于主机强制玩家跳舞；未配置则返回 null（结果随缓存更新）。</summary>
+        private string FirstDanceEmoteName()
         {
-            var list = WeightedPicker.ParseList(ModConfig.Dancer.DanceEmoteNames.Value);
-            return list.Count > 0 ? list[0] : null;
+            RefreshDanceNames();
+            return _danceFirstName;
         }
 
-        /// <summary>首次观测到某表情名时打印一次日志，便于用户定位「跳舞」的真实动画名。</summary>
+        /// <summary>
+        /// 首次观测到某表情名时打印一次日志：既便于用户定位「跳舞」的真实动画名，
+        /// 也直接标出「表情转职」的配置值是否与它匹配（下次反馈表情转职无效时可据此一步定位）。
+        /// </summary>
         private void LogObservedEmote(Character dancer, string emoteName, bool isDance)
         {
             if (!_observedEmotes.Add(emoteName)) return;
+
+            string reclassInfo = ModConfig.General.ReclassEmoteEnabled.Value
+                ? $"；转职表情配置「{ModConfig.General.ReclassEmoteName.Value}」" +
+                  $"→ {(IsReclassEmote(emoteName) ? "匹配" : "不匹配")}"
+                : "；表情转职未启用";
+
             Plugin.Log.LogInfo(
                 $"[RollOfTheScout] 舞王·观测到表情「{emoteName}」（{Nick(dancer)} 播放，" +
-                $"{(isDance ? "已判定为跳舞" : "非跳舞")}）。若跳舞判定有误，请据此修改配置「舞王-跳舞动作名」。");
+                $"{(isDance ? "已判定为跳舞" : "非跳舞")}{reclassInfo}）。" +
+                $"若跳舞判定有误，请据此修改配置「舞王-跳舞动作名」。");
         }
 
         /// <summary>
@@ -9081,6 +9212,17 @@ namespace RollOfTheScout
 
             float radius = Mathf.Max(0f, ModConfig.Dancer.YouthRadius.Value);
 
+            // 冷却检查提前到「扫描在场角色」之前：舞王高频重复跳舞时，
+            // 冷却期内直接返回，不再分配列表、不再遍历全部角色。
+            float cooldown = Mathf.Max(0f, ModConfig.Dancer.YouthCooldownSeconds.Value);
+            string dancerId = _ledger.IdOf(dancer);
+            if (!string.IsNullOrEmpty(dancerId)
+                && _dancerYouthCooldownUntil.TryGetValue(dancerId, out float until)
+                && Time.time < until)
+            {
+                return;
+            }
+
             // 找出跳舞玩家半径内的所有舞王（不含自己时的自己会在下面补上）
             var recipients = new List<Character>();
             foreach (var c in HostApi.GetActiveCharacters())
@@ -9092,14 +9234,8 @@ namespace RollOfTheScout
             }
             if (recipients.Count == 0) return; // 附近没有舞王 → 无人受益
 
-            // 检测冷却：冷却窗口内同一玩家的再次跳舞不触发
-            float cooldown = Mathf.Max(0f, ModConfig.Dancer.YouthCooldownSeconds.Value);
-            string dancerId = _ledger.IdOf(dancer);
-            if (!string.IsNullOrEmpty(dancerId))
-            {
-                if (_dancerYouthCooldownUntil.TryGetValue(dancerId, out float until) && Time.time < until) return;
-                _dancerYouthCooldownUntil[dancerId] = Time.time + cooldown;
-            }
+            // 半径内确有舞王 → 进入冷却（与原先一致：无人受益时不消耗冷却）
+            if (!string.IsNullOrEmpty(dancerId)) _dancerYouthCooldownUntil[dancerId] = Time.time + cooldown;
 
             // 跳舞玩家若也是舞王（必然已在 recipients 内），避免重复加成
             if (!recipients.Contains(dancer)) recipients.Add(dancer);
@@ -9120,9 +9256,14 @@ namespace RollOfTheScout
             float radius = Mathf.Max(0f, ModConfig.Dancer.CheerRadius.Value);
 
             int n = 0;
-            foreach (var c in HostApi.GetCharactersInRadius(dancer.Center, radius))
+            // 直接倒序遍历 Character.AllCharacters：不再为每次跳舞分配一个「半径内角色」列表。
+            // 倒序可避免遍历期间列表被移除元素时抛异常（播放表情本身不会增删角色）。
+            var all = Character.AllCharacters;
+            for (int i = (all != null ? all.Count : 0) - 1; i >= 0; i--)
             {
+                var c = all[i];
                 if (c == null || c == dancer) continue;
+                if (Vector3.Distance(c.Center, dancer.Center) > radius) continue;
                 if (IsDead(c)) continue;
                 if (IsTranscendent(c))
                 {
@@ -9154,16 +9295,20 @@ namespace RollOfTheScout
             }
 
             bool interrupted = InterruptClimbing(target);
-            // 职业效果强制表情优先：抑制计数 > 0 期间收到的表情 RPC 不参与表情转职判定。
+            // 职业效果强制表情优先：只把「这一条被强制的表情回调」标记为不参与转职判定。
             // （本 RPC 是 RpcTarget.All，主机作为发送方也会同步收到并进入 EmotePatch）
-            _suppressReclassEmote++;
+            int prevViewId = _forcedEmoteViewId;
+            string prevName = _forcedEmoteName;
+            _forcedEmoteViewId = target.photonView.ViewID;
+            _forcedEmoteName = emoteName;
             try
             {
                 target.photonView.RPC("RPCA_PlayRemove", RpcTarget.All, emoteName, true);
             }
             finally
             {
-                _suppressReclassEmote = Mathf.Max(0, _suppressReclassEmote - 1);
+                _forcedEmoteViewId = prevViewId;
+                _forcedEmoteName = prevName;
             }
             Plugin.Log.LogInfo($"[RollOfTheScout] {reason}：强制 {Nick(target)} 跳舞（{emoteName}）" +
                 $"{(interrupted ? "，已先打断攀爬" : "")}。");
@@ -9184,15 +9329,19 @@ namespace RollOfTheScout
 
             const string emoteName = "A_Scout_Emote_BackFlip";
             bool interrupted = InterruptClimbing(target);
-            // 职业效果强制表情优先：抑制计数 > 0 期间收到的表情 RPC 不参与表情转职判定
-            _suppressReclassEmote++;
+            // 职业效果强制表情优先：只跳过这一条被强制的表情回调（同 ForceDance）
+            int prevViewId = _forcedEmoteViewId;
+            string prevName = _forcedEmoteName;
+            _forcedEmoteViewId = target.photonView.ViewID;
+            _forcedEmoteName = emoteName;
             try
             {
                 target.photonView.RPC("RPCA_PlayRemove", RpcTarget.All, emoteName, true);
             }
             finally
             {
-                _suppressReclassEmote = Mathf.Max(0, _suppressReclassEmote - 1);
+                _forcedEmoteViewId = prevViewId;
+                _forcedEmoteName = prevName;
             }
             Plugin.Log.LogInfo($"[RollOfTheScout] {reason}：强制 {Nick(target)} 后空翻（{emoteName}）" +
                 $"{(interrupted ? "，已先打断攀爬" : "")}。");
@@ -10309,8 +10458,11 @@ namespace RollOfTheScout
             // 字体尚未解析出来时，回退到旧的 IMGUI 自绘（Arial），保证功能不中断。
             if (PeakNativeUi.NativeOverlay.Ready) return;
 
-            DrawToasts();
+            // 先画右上角面板 + 左上角职业介绍，再画提示：
+            // 提示需要知道介绍板块本帧的底边，才能临时下移避免重叠。
+            _imguiIntroBottom = 0f;
             DrawClassList();
+            DrawToasts();
         }
 
         /// <summary>
@@ -10492,15 +10644,16 @@ namespace RollOfTheScout
                 GUI.Label(line, display[i], i == 0 ? _classListTitleStyle : _classListStyle);
             }
 
-            // 面板下方：本人职业的关键词与简介（与面板同时显示）
-            DrawClassIntro(box.yMax + 8f);
+            // 左上角：本人职业的关键词与简介（与面板同时显示；不再跟随面板高度）
+            DrawClassIntro();
         }
 
         /// <summary>
         /// IMGUI 回退绘制「本人职业介绍」板块（仅在原生字体叠加层不可用时走到这里）。
-        /// 与原生叠加层同义：只显示本机玩家自己的职业，不列出全部职业。
+        /// 与原生叠加层同义：只显示本机玩家自己的职业，不列出全部职业；**固定在屏幕左上角**，
+        /// 玩家人数很多、右上角面板很长时也不会被挤出屏幕。绘制后记录底边供提示层下移。
         /// </summary>
-        private void DrawClassIntro(float top)
+        private void DrawClassIntro()
         {
             if (!TryBuildClassIntro(LocalClassCode(), out string title, out List<string> lines)) return;
 
@@ -10527,7 +10680,7 @@ namespace RollOfTheScout
             float lineH = _classIntroStyle.fontSize * 1.6f;
             var body = new GUIContent(string.Join("\n", lines));
             float bodyH = _classIntroStyle.CalcHeight(body, w - 20f);
-            var box = new Rect(Screen.width - w - 12f, top, w, lineH + bodyH + 16f);
+            var box = new Rect(12f, 12f, w, lineH + bodyH + 16f);
 
             GUI.color = new Color(0f, 0f, 0f, 0.6f);
             GUI.DrawTexture(box, Texture2D.whiteTexture);
@@ -10535,6 +10688,8 @@ namespace RollOfTheScout
 
             GUI.Label(new Rect(box.x + 10f, box.y + 6f, box.width - 20f, lineH), title, _classIntroTitleStyle);
             GUI.Label(new Rect(box.x + 10f, box.y + 6f + lineH, box.width - 20f, bodyH), body, _classIntroStyle);
+
+            _imguiIntroBottom = box.yMax;   // 供提示层临时下移
         }
 
         private void DrawToasts()
@@ -10555,7 +10710,9 @@ namespace RollOfTheScout
             float w = Screen.width * 0.45f;
             float lineH = _toastStyle.fontSize * 1.6f;
             float h = lineH * _toasts.Count + 12f;
-            var box = new Rect(12f, 12f, w, h);
+            // 介绍板块显示时临时下移到它下方（避免与左上角提示重叠）
+            float top = _imguiIntroBottom > 0f ? _imguiIntroBottom + 8f : 12f;
+            var box = new Rect(12f, top, w, h);
             GUI.color = new Color(0f, 0f, 0f, 0.6f);
             GUI.DrawTexture(box, Texture2D.whiteTexture);
             GUI.color = Color.white;

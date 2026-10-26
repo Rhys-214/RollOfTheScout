@@ -194,12 +194,20 @@ namespace RollOfTheScout
             return result;
         }
 
-        /// <summary>把「英文逗号分隔」的配置字符串解析成名字数组（自动去空格、忽略空项）。</summary>
+        /// <summary>
+        /// 把「逗号分隔」的配置字符串解析成名字数组（自动去空格、忽略空项）。
+        ///
+        /// 分隔符同时接受半角逗号、**全角逗号「，」**、顿号「、」、分号与换行 ——
+        /// 中文输入法下编辑配置时很容易打出全角逗号，旧实现会把整串当成一个物品名，
+        /// 导致物品池「解析失败 → 一件都不发」。
+        /// </summary>
+        private static readonly char[] ListSeparators = { ',', '，', '、', ';', '；', '\n', '\r' };
+
         public static List<string> ParseList(string raw)
         {
             var list = new List<string>();
             if (string.IsNullOrWhiteSpace(raw)) return list;
-            foreach (var part in raw.Split(','))
+            foreach (var part in raw.Split(ListSeparators, System.StringSplitOptions.RemoveEmptyEntries))
             {
                 var name = part.Trim();
                 if (name.Length > 0) list.Add(name);

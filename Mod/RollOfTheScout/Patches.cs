@@ -1867,11 +1867,17 @@ namespace RollOfTheScout.Patches
     /// 苏醒那一刻正是原版唯一解除契约的触发点。
     ///
     /// 本补丁让**主机**在「本该放下却没放下」时代为广播原版 <c>RPCA_Drop</c>（无需客机安装）：
-    ///   ① 背人者仍记着被背者，但被背者已死亡 / 已苏醒，或背人者已死亡（仅对主机不拥有的角色执行，
-    ///      拥有者客户端自己会正常放下）；
-    ///   ② 被背者残留 <c>isCarried</c> / <c>carrier</c>（背人者掉线、自己已苏醒或已死亡）——
+    ///   ① 背人者仍记着被背者，但被背者已死亡 / **曾在背上昏迷且已苏醒**，或背人者已死亡 / 昏迷
+    ///      （仅对主机不拥有的角色执行，拥有者客户端自己会正常放下）；
+    ///   ② 被背者残留 <c>isCarried</c> / <c>carrier</c>（背人者掉线、自己已死亡、或自己曾昏迷且已苏醒）——
     ///      **这一条对主机自己的角色同样执行**：原版只由背人者广播放下，被背者自己从不清理，
     ///      因此主机被客机背起时同样可能永久吸附。
+    ///
+    /// **与 Piggyback 等「允许背起清醒玩家」的第三方模组兼容**：原实现把「被背者未昏迷」一律当作异常，
+    /// 于是只要有人用 Piggyback 背起清醒玩家，0.5 秒后就会被主机强行拆散（实测反馈：联机无法背起未昏迷玩家）。
+    /// 现在改为记录「**本次背人期间被背者是否曾昏迷 / 死亡**」：只有经历过昏迷的被背者苏醒后才代为放下
+    /// （复刻原版「苏醒即放下」）；全程清醒的背人（Piggyback）不干预。检测到 Piggyback 时更进一步——
+    /// 连「昏迷后苏醒」也不再拆散（该模组本就允许继续背着清醒玩家）。
     /// 异常状态需「持续 0.5 秒」才动手（避免与正常进行的背人抢跑）；RPC 若再丢失会按 0.5 秒重试。
     /// </summary>
     public static class CarryReleaseWatchdogPatch
@@ -1882,6 +1888,81 @@ namespace RollOfTheScout.Patches
         /// <summary>角色 PhotonView.ViewID → 首次观测到「异常状态」的时刻（Time.time）。</summary>
         private static readonly System.Collections.Generic.Dictionary<int, float> SinceSeen =
             new System.Collections.Generic.Dictionary<int, float>();
+
+        /// <summary>
+        /// 被背者 PhotonView.ViewID → **本次被背期间**是否曾处于昏迷 / 死亡状态。
+        /// 只有经历过昏迷的被背者，苏醒后才应回到原版「苏醒即放下」；全程清醒的背人不算异常。
+        /// 背人结束时清除该记录（见 Postfix 末尾）。
+        /// </summary>
+        private static readonly System.Collections.Generic.Dictionary<int, bool> DownedDuringCarry =
+            new System.Collections.Generic.Dictionary<int, bool>();
+
+        /// <summary>是否检测到「允许背起清醒玩家」的第三方模组（当前已知：Piggyback）。null = 尚未检测。</summary>
+        private static bool? _awakeCarryModPresent;
+        private static bool _awakeCarryModLogged;
+
+        /// <summary>
+        /// 检测「允许背起清醒玩家」的第三方模组。三重兜底：已加载程序集名 → BepInEx 插件 GUID → 配置文件存在。
+        /// 结果缓存（只判定一次），任何一步异常都不影响主逻辑。
+        /// </summary>
+        private static bool AwakeCarryModPresent()
+        {
+            if (_awakeCarryModPresent.HasValue) return _awakeCarryModPresent.Value;
+
+            bool found = false;
+
+            try
+            {
+                foreach (var asm in System.AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    var name = asm != null ? asm.GetName().Name : null;
+                    if (string.IsNullOrEmpty(name)) continue;
+                    if (name.IndexOf("piggyback", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            catch { /* 枚举程序集失败：忽略 */ }
+
+            if (!found)
+            {
+                try
+                {
+                    foreach (var key in BepInEx.Bootstrap.Chainloader.PluginInfos.Keys)
+                    {
+                        if (key != null && key.IndexOf("piggyback", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                catch { /* BepInEx API 差异：忽略 */ }
+            }
+
+            if (!found)
+            {
+                try
+                {
+                    string cfg = System.IO.Path.Combine(
+                        BepInEx.Paths.ConfigPath, "nakazora.peak.piggyback.cfg");
+                    if (System.IO.File.Exists(cfg)) found = true;
+                }
+                catch { /* 路径 API 差异：忽略 */ }
+            }
+
+            _awakeCarryModPresent = found;
+            if (found && !_awakeCarryModLogged)
+            {
+                _awakeCarryModLogged = true;
+                Plugin.Log.LogInfo(
+                    "[RollOfTheScout] 检测到「允许背起清醒玩家」的第三方模组（Piggyback）。"
+                    + "背人自愈将只处理被背者死亡 / 背人者倒地 / 背人者消失，不再把「背起清醒玩家」当作异常拆散。");
+            }
+            return found;
+        }
 
         // 原版 CharacterCarrying 的私有字段 character（在 Start 里赋值）。
         // 直接按字段读取，避免**每帧每个角色**都调用一次 GetComponent（原生调用，是这条每帧补丁里最贵的部分）。
@@ -1934,12 +2015,42 @@ namespace RollOfTheScout.Patches
                 var carrier = character.data.carrier;
                 bool carriedFlag = character.data.isCarried;
 
+                // ---- 记录「本次背人期间被背者是否曾昏迷 / 死亡」 ----
+                // 这是兼容 Piggyback 的关键：全程清醒的被背（允许背起清醒玩家的模组）不能被当作异常；
+                // 只有「昏迷 → 苏醒」才复刻原版「苏醒即放下」。
+                if (carried != null && carried.data != null && carried.photonView != null)
+                {
+                    if (carried.data.fullyPassedOut || carried.data.dead)
+                        DownedDuringCarry[carried.photonView.ViewID] = true;
+                }
+                if (carriedFlag)
+                {
+                    if (character.data.fullyPassedOut || character.data.dead)
+                        DownedDuringCarry[view.ViewID] = true;
+                }
+                else if (carrier == null && DownedDuringCarry.Count > 0)
+                {
+                    // 自己已不处于「被背」状态：本次背人结束，清掉期间标记
+                    DownedDuringCarry.Remove(view.ViewID);
+                }
+
+                bool awakeCarryMod = AwakeCarryModPresent();
+                bool carriedWasDowned = carried != null && carried.photonView != null
+                    && DownedDuringCarry.TryGetValue(carried.photonView.ViewID, out bool carriedDowned)
+                    && carriedDowned;
+                bool selfWasDowned = DownedDuringCarry.TryGetValue(view.ViewID, out bool selfDowned)
+                    && selfDowned;
+
                 // ---- ① 背人者仍记着被背者，但这次早该放下了 ----
                 // 拥有者客户端会执行原版放下判定（Update 条件末尾带 refs.view.IsMine），
                 // 因此只对「主机不拥有的角色」介入，避免与拥有者抢发同一份 RPC。
-                bool carrierStale = !view.IsMine
-                    && carried != null && carried.data != null && carried.photonView != null
-                    && (carried.data.dead || !carried.data.fullyPassedOut
+                // 「被背者未昏迷」只有在**本次背人期间曾昏迷过**时才算异常（苏醒）；
+                // 检测到 Piggyback 时连苏醒也不拆散（该模组允许继续背着清醒玩家）。
+                bool carriedOk = carried != null && carried.data != null && carried.photonView != null;
+                bool awakeStale = carriedOk && !carried.data.fullyPassedOut && !carried.data.dead
+                    && carriedWasDowned && !awakeCarryMod;
+                bool carrierStale = !view.IsMine && carriedOk
+                    && (carried.data.dead || awakeStale
                         || character.data.fullyPassedOut || character.data.dead);
 
                 // ---- ② 自己是被背的一方：早该解除，但「被背」标记仍挂着 ----
@@ -1947,12 +2058,14 @@ namespace RollOfTheScout.Patches
                 // 所以这一条对「主机自己的角色」也必须执行 —— 否则主机被客机背起、
                 // 而那次 RPCA_Drop 丢失时，主机自己也会永久吸附（实测日志里主机就被背起过）。
                 // 三种情形：背人者已不存在（掉线 / 角色销毁，原版 CarrierGone 只恢复碰撞）、
-                // 自己已死亡、自己已苏醒。
+                // 自己已死亡、自己曾昏迷且已苏醒。
                 //
                 // 自己正背着别人时不能走这条通道：RPCA_Drop 会把自己背的人一起放下。
+                bool selfAwakeStale = !character.data.fullyPassedOut && !character.data.dead
+                    && selfWasDowned && !awakeCarryMod;
                 bool victimStale = carried == null
                     && (carriedFlag || carrier != null)
-                    && (carrier == null || character.data.dead || !character.data.fullyPassedOut);
+                    && (carrier == null || character.data.dead || selfAwakeStale);
 
                 if (!carrierStale && !victimStale)
                 {
@@ -1976,12 +2089,13 @@ namespace RollOfTheScout.Patches
                 if (carrierStale)
                 {
                     string reason = carried.data.dead ? "被背者已死亡"
-                        : !carried.data.fullyPassedOut ? "被背者已苏醒"
+                        : awakeStale ? "被背者曾在背上昏迷后苏醒"
                         : character.data.dead ? "背人者已死亡"
                         : "背人者已昏迷";
 
                     // 与拥有者客户端同一条通道：广播原版 RPCA_Drop（RpcTarget.All）
                     view.RPC("RPCA_Drop", RpcTarget.All, carried.photonView);
+                    if (carried.photonView != null) DownedDuringCarry.Remove(carried.photonView.ViewID);
                     Plugin.Log.LogInfo(
                         $"[RollOfTheScout] 背人状态自愈：{NameOf(character)} 早该放下 {NameOf(carried)}"
                         + $"（{reason}），主机代为广播放下。");
@@ -1991,9 +2105,10 @@ namespace RollOfTheScout.Patches
                 // 以自己的 PhotonView 为目标广播 RPCA_Drop：该 RPC 内部以「接收端角色」为 component，
                 // 因此会把自身的 isCarried / carrier 一并清掉（上一条已确保自身没有背着别人）。
                 view.RPC("RPCA_Drop", RpcTarget.All, view);
+                DownedDuringCarry.Remove(view.ViewID);
                 Plugin.Log.LogInfo(
                     $"[RollOfTheScout] 背人状态自愈：{NameOf(character)} 仍残留「被背」标记"
-                    + $"（{(carrier == null ? "背人者已不存在" : character.data.dead ? "自己已死亡" : "自己已苏醒")}），"
+                    + $"（{(carrier == null ? "背人者已不存在" : character.data.dead ? "自己已死亡" : "自己曾昏迷后苏醒")}），"
                     + "主机代为清除。");
             }
             catch (System.Exception e)

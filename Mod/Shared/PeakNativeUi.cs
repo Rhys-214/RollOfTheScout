@@ -128,8 +128,10 @@ namespace PeakNativeUi
     ///   <c>raycastTarget=false</c> → 绝不影响任何点击输入）；
     /// · <c>DontDestroyOnLoad</c> 单例，切场景不重建；
     /// · 懒创建 + 限流重试：字体尚未解析出来时返回「未就绪」，由调用方回退到旧的 IMGUI 绘制；
-    /// · 三个槽位：左上「提示 Toast」、右上「职业分配面板」、以及紧贴面板下方的「职业介绍面板」，
-    ///   排版沿用原有规则（字号 ≈ 屏幕高/48、左/右各留 12px、标题行黄色加粗、最多若干行）。
+    /// · 三个槽位：**左上「职业介绍面板」、其正下方「提示 Toast」、右上「职业分配面板」**。
+    ///   介绍面板固定在左上角（不再跟随面板高度变化，人数很多时也不会被挤出屏幕）；
+    ///   它显示期间，原本在左上的提示会被临时下移到介绍面板下方，避免重叠。
+    ///   排版沿用原有规则（字号 ≈ 屏幕高/48、左/右各留 12px、标题行黄色、最多若干行）。
     /// </summary>
     public static class NativeOverlay
     {
@@ -191,11 +193,12 @@ namespace PeakNativeUi
             }
         }
 
-        /// <summary>左上角提示（与主机端 Toast 队列同一份文本）。</summary>
+        /// <summary>左上角提示（与主机端 Toast 队列同一份文本；介绍面板显示时会自动下移到其下方）。</summary>
         public static void SetToast(IList<string> lines)
         {
             if (!Ready) return;
             SetBlock(_toast, Join(lines, null), _toast.Bold);
+            PositionToast();
         }
 
         /// <summary>
@@ -210,6 +213,7 @@ namespace PeakNativeUi
             if (version >= 0 && version == b.LastVersion) return;   // 内容未变：连字符串都不重建
             b.LastVersion = version;
             SetBlock(b, Join(lines, null), b.Bold);
+            PositionToast();
         }
 
         /// <summary>右上角职业分配面板。</summary>
@@ -229,11 +233,12 @@ namespace PeakNativeUi
             var b = _panel;
             if (!visible)
             {
-                // 面板隐藏时，紧贴其下的「职业介绍」也必须一起隐藏（避免残留一块孤立文本）。
+                // 面板隐藏时，「职业介绍」也必须一起隐藏（避免残留一块孤立文本）。
                 SetBlock(b, null, b.Bold);
                 b.LastVersion = int.MinValue;   // 下次显示（哪怕同一版本号）必须重建
                 SetBlock(_intro, null, _intro.Bold);
                 _intro.LastVersion = int.MinValue;
+                PositionToast();                // 介绍已隐藏 → 提示回到左上角
                 return;
             }
             if (version >= 0 && version == b.LastVersion) return;
@@ -252,11 +257,13 @@ namespace PeakNativeUi
             _panel.LastVersion = int.MinValue;
             SetBlock(_intro, null, _intro.Bold);
             _intro.LastVersion = int.MinValue;
+            PositionToast();   // 介绍已隐藏 → 提示回到左上角
         }
 
         /// <summary>
-        /// 职业分配面板<b>下方</b>的「职业介绍」面板（当前玩家自己的职业关键词 / 简介）。
-        /// 每帧调用；版本号未变时不重建文本，位置仍按面板高度重新对齐。
+        /// <b>左上角</b>的「职业介绍」面板（当前玩家自己的职业关键词 / 简介）。
+        /// 位置固定，不再跟随职业分配面板高度 —— 玩家人数很多、面板很长时也不会被挤出屏幕。
+        /// 它显示期间，左上角的提示会被临时下移到它下方（见 <see cref="PositionToast"/>）。
         /// </summary>
         public static void SetClassIntro(string title, IList<string> lines, bool visible)
         {
@@ -272,6 +279,7 @@ namespace PeakNativeUi
             {
                 SetBlock(b, null, b.Bold);
                 b.LastVersion = int.MinValue;
+                PositionToast();
                 return;
             }
             if (version < 0 || version != b.LastVersion)
@@ -279,7 +287,7 @@ namespace PeakNativeUi
                 b.LastVersion = version;
                 SetBlock(b, Join(lines, title), b.Bold);
             }
-            PositionIntro();
+            PositionToast();
         }
 
         /// <summary>只隐藏「职业介绍」面板（不拼接任何字符串）。</summary>
@@ -288,23 +296,24 @@ namespace PeakNativeUi
             if (!Ready) return;
             SetBlock(_intro, null, _intro.Bold);
             _intro.LastVersion = int.MinValue;
+            PositionToast();
         }
 
         /// <summary>
-        /// 把「职业介绍」面板贴到职业分配面板的下方：面板高度是动态的（玩家人数变化会变），
-        /// 因此每次显示时都按面板当前高度重新定位（不依赖面板内容是否变化）。
+        /// 按「职业介绍面板是否可见 / 多高」重新摆放左上角提示：
+        /// 介绍隐藏时贴在顶部（12px）；介绍可见时移动到它的正下方（间隔 8px），避免重叠。
+        /// 只读两个属性 + 一个高度，每帧调用也无分配。
         /// </summary>
-        private static void PositionIntro()
+        private static void PositionToast()
         {
-            var b = _intro;
-            if (b == null || b.Root == null) return;
-            if (!b.Root.gameObject.activeSelf) return;
+            var toast = _toast;
+            if (toast == null || toast.Root == null) return;
 
-            float panelHeight = 0f;
-            if (_panel != null && _panel.Root != null && _panel.Root.gameObject.activeSelf)
-                panelHeight = _panel.Root.sizeDelta.y;
+            float top = 12f;
+            if (_intro != null && _intro.Root != null && _intro.Root.gameObject.activeSelf)
+                top += _intro.Root.sizeDelta.y + 8f;
 
-            b.Root.anchoredPosition = new Vector2(-12f, -(12f + panelHeight + 8f));
+            toast.Root.anchoredPosition = new Vector2(12f, -top);
         }
 
         /// <summary>销毁叠加层（插件卸载 / 重载时调用）。</summary>
@@ -333,8 +342,9 @@ namespace PeakNativeUi
 
             _toast = CreateBlock("Toast", font, rightSide: false, widthFraction: 0.45f, bold: false);
             _panel = CreateBlock("ClassPanel", font, rightSide: true, widthFraction: 0.32f, bold: false);
-            // 职业介绍面板：跟随在面板下方，宽度略宽（长简介折行更少、整体更矮）
-            _intro = CreateBlock("ClassIntro", font, rightSide: true, widthFraction: 0.40f, bold: false);
+            // 职业介绍面板：固定在**左上角**（与提示同侧，显示时提示会自动下移），
+            // 宽度略宽（长简介折行更少、整体更矮）
+            _intro = CreateBlock("ClassIntro", font, rightSide: false, widthFraction: 0.40f, bold: false);
         }
 
         private static Block CreateBlock(string name, TMP_FontAsset font, bool rightSide, float widthFraction, bool bold)

@@ -67,8 +67,8 @@ namespace RollOfTheScout
                 case 5: return "初始武器、匕首吹箭、拾取转化";
                 case 6: return "范围潘多拉、拾取转化、概率消失、持续自增诅咒";
                 case 7: return "骸骨之书、死亡增益、骷髅强化、初始高诅咒、诅咒与增益运营";
-                case 8: return "毒孢抗性、自然食物、周期粉蕉、禁用工具";
-                case 9: return "负面状态转化、无负面周期惩罚、周期负面耐受";
+                case 8: return "负面状态转化、无负面周期惩罚、周期负面耐受";
+                case 9: return "毒孢抗性、自然食物、周期粉蕉、禁用工具";
                 case 10: return "开局随机物资腰包、独行流血、集体行动、同伴增益";
                 case 11: return "检查点旗标、插旗范围清负、自身插旗石化、全员随机增益、团队爆发";
                 case 12: return "跳舞回体、强制共舞、周期后空翻、摔倒风险";
@@ -105,8 +105,8 @@ namespace RollOfTheScout
                 case 5: return "【生死问题】开局自带仪式匕首与吹箭筒；拾取物品概率变为武器；杀人还是救人，这是一个问题。";
                 case 6: return "【混沌之子】持续向周围散播潘多拉效果；拾取物品半变魔盒半消失；自身诅咒持续叠加。";
                 case 7: return "【骷髅之王】致敬本模组最不小团体的职业；通过玩家死亡、与骷髅配合降低自身诅咒；持续为周围的人类玩家施加中毒、骷髅玩家获得额外体力与无敌。";
-                case 8: return "【自然力量】自身对中毒与孢子有较强抗性；只能食用生的自然食物，否则获得损伤；定时获得粉莓蕉；自身无法主动使用攀爬道具，拾取会直接变为木棍。";
-                case 9: return "【负面转化】受到绝大部分负面状态时，等量转化额外体力；身上无负面状态则周期损失额外体力；对特定负面状态有耐受。";
+                case 8: return "【负面转化】受到绝大部分负面状态时，等量转化额外体力；身上无负面状态则周期损失额外体力；对特定负面状态有耐受。";
+                case 9: return "【自然力量】自身对中毒与孢子有较强抗性；只能食用生的自然食物，否则获得损伤；定时获得粉莓蕉；自身无法主动使用攀爬道具，拾取会直接变为木棍。";
                 case 10: return "【结伴而行】开局自带随机物资腰包；落单独行持续流血与饥饿；需和玩家结伴同行缓解，与同职业【童军】与【领袖】有加强羁绊。";
                 case 11: return "【团队旗手】每关获得检查点旗标；自身插旗立即范围清除负面，三秒后全员获得随机增益效果；自身每次插旗增加石化。";
                 case 12: return "【一起跳舞】自身范围内玩家跳舞获得额外体力；自身跳舞强制周围玩家共舞；定时强制后空翻且必定摔倒。";
@@ -147,8 +147,8 @@ namespace RollOfTheScout
                 case 5: return "Starting weapons · Dagger and blowgun · Pickup conversion";
                 case 6: return "Area Pandora · Pickup conversion · Chance to vanish · Steadily rising curse";
                 case 7: return "Book of Bones · Death buffs · Skeleton empowerment · High starting curse · Curse/gain management";
-                case 8: return "Poison/spore resistance · Natural food only · Periodic pink banana · Tools disabled";
-                case 9: return "Debuff conversion · Penalty without debuffs · Periodic debuff tolerance";
+                case 8: return "Debuff conversion · Penalty without debuffs · Periodic debuff tolerance";
+                case 9: return "Poison/spore resistance · Natural food only · Periodic pink banana · Tools disabled";
                 case 10: return "Starting random fanny pack · Solo bleeding · Group action · Companion buffs";
                 case 11: return "Checkpoint flag · Area debuff purge on plant · Self petrify on plant · Random team buffs · Team burst";
                 case 12: return "Dance for stamina · Forced group dance · Periodic backflip · Fall risk";
@@ -185,8 +185,8 @@ namespace RollOfTheScout
                 case 5: return "【A matter of life and death】 starts with a ritual dagger and a blowgun; picked-up items may become weapons; to kill or to save, that is the question.";
                 case 6: return "【Child of chaos】 keeps spreading the Pandora effect around you; half of the items you pick up become boxes and half vanish; your curse keeps stacking.";
                 case 7: return "【King of skeletons】 a tribute to the mod's least small group; lower your curse through player deaths and skeleton allies; keep poisoning nearby humans while skeletons gain extra stamina and invincibility.";
-                case 8: return "【Power of nature】 strong resistance to poison and spores; you can only eat raw natural food or take injury; gains a pink banana on a timer; climbing tools are unusable — picked-up ones turn into wooden sticks.";
-                case 9: return "【Negative conversion】 most debuffs you take convert into an equal amount of extra stamina; with no debuffs you periodically lose extra stamina; tolerant against specific debuffs.";
+                case 8: return "【Negative conversion】 most debuffs you take convert into an equal amount of extra stamina; with no debuffs you periodically lose extra stamina; tolerant against specific debuffs.";
+                case 9: return "【Power of nature】 strong resistance to poison and spores; you can only eat raw natural food or take injury; gains a pink banana on a timer; climbing tools are unusable — picked-up ones turn into wooden sticks.";
                 case 10: return "【Better together】 starts with a random-item fanny pack; alone you bleed and starve; you need company to ease it; strengthened bond with fellow Scouts and Leaders.";
                 case 11: return "【Team standard-bearer】 a checkpoint flag every level; planting it immediately clears debuffs in range and 3 s later grants everyone random buffs; each plant adds petrify to yourself.";
                 case 12: return "【Dance together】 players dancing in your range grant extra stamina; your own dance forces nearby players to dance; periodic forced backflips that always end in a fall.";

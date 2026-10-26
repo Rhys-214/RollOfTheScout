@@ -18,7 +18,7 @@
 - **Host-screen UI**: a class-assignment panel plus effect notifications (toasts).
 - **Overhead class prefix**: shows `【Class】Nickname` above players (drawn locally on each client).
 - **Optional host→client broadcast** (Photon custom event `197`): players with the companion **client display mod** installed can see class info on **their own screen**.
-- **Fully configurable**, and the config file is **bilingual**.
+- **Fully configurable**, and the config file is **bilingual**: Chinese for a Chinese game language, English for every other language.
 
 ### Requirements
 
@@ -37,6 +37,7 @@ Clients install **nothing**. (Optionally, a separate **client display mod** can 
 
 Config files are generated automatically on first run(`BepInEx/config/com.peakmodding.RollOfTheScout.cfg`), and can also be edited directly in-game through the ModConfig config UI.
 > If a new version adds options, an existing `.cfg` will **not** pick up the new keys — delete the old `.cfg` and restart to regenerate.
+> After the mod is updated to version 1.0.7, the mod configuration file will be automatically backed up and reset during the update.
 
 ### Current class list (v1.0.0, as of Oct 18, 2026)
 
@@ -129,7 +130,7 @@ Welcome to join the PEAK community group ~ (QQ group: **814891614**; mod updates
 - **主机屏幕 UI**：职业分配面板 + 效果提示（Toast）。
 - **头顶职业前缀**：在玩家头顶显示「【职业】昵称」（各客户端本地绘制）。
 - **可选的主机→客机广播**（Photon 自定义事件 `197`）：装了**配套客机显示模组**的玩家可在**自己屏幕**上看到职业信息。
-- **全部可配置**，且配置文件为**中英双语**。
+- **全部可配置**，且配置文件为**中英双语**：游戏语言为中文时用中文配置，其它语言一律使用英文。
 
 ### 环境要求
 
@@ -148,6 +149,7 @@ Welcome to join the PEAK community group ~ (QQ group: **814891614**; mod updates
 
 配置文件将在首次运行自动生成（`BepInEx/config/com.peakmodding.RollOfTheScout.cfg`），也可在游戏内的 ModConfig 配置界面直接修改。
 > 新版本若新增了配置项，**旧的 `.cfg` 不会自动补全新键** —— 请删除旧版 `.cfg` 后重启以重新生成。
+> 模组1.0.7版本更新后，模组配置文件将会自动备份与更新重置。
 
 ### 当前版本职业一览（v1.0.0，截止至2026年10月18日）
 
