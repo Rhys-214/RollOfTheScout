@@ -7,7 +7,7 @@
 ## English
 
 > A **PEAK** mod. At the start of every run, every player is **randomly assigned** a **class**. The host drives class assignment and the host-side effects through PEAK's networked RPCs — **clients need not install anything**. 
-> Clients with the main mod or companion addon additionally settle their own MilesSoul gem effects locally using the host's synchronized configuration.
+> - Clients with the main mod or companion addon additionally settle their own MilesSoul gem effects locally using the host's synchronized configuration.
 
 ### Highlights
 
@@ -120,7 +120,7 @@ Welcome to join the PEAK community group ~ (QQ group: **814891614**; mod updates
 ## 中文
 
 > 一个 **PEAK** 模组。每局游戏开始时，为每名玩家**随机分配**一个**职业**。职业分配与主机侧效果由**房主（MasterClient）**通过 PEAK 网络 RPC 驱动 —— **客机无需安装**。
-> 若客机安装主模组或配套附属模组，残魂宝石效果会按主机同步的配置在本人客户端结算。
+> - 若客机安装主模组或配套附属模组，残魂宝石效果会按主机同步的配置在本人客户端结算。
 
 ### 特色
 
