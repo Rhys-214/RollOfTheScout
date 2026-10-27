@@ -29,6 +29,8 @@
     <Compile Include="..\Shared\ThirdPartyOverheadNameCompat.cs" />
     <!-- 与附属模组共用的「原生字体叠加层」（用游戏自带 TMP 字体绘制，取代 IMGUI 自绘） -->
     <Compile Include="..\Shared\PeakNativeUi.cs" />
+    <!-- 与附属模组共用的残魂本机宝石检测 / 状态结算 -->
+    <Compile Include="..\Shared\MilesSoulLocal.cs" />
   </ItemGroup>
 
   <ItemGroup>

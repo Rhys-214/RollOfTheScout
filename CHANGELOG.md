@@ -252,3 +252,45 @@
     - 修复：背人自愈现在记录「**本次背人期间被背者是否曾昏迷 / 死亡**」，只有经历过昏迷的被背者苏醒后才代为放下（保留原「背上苏醒仍吸附」的修复）；全程清醒的背人不再干预。检测到 Piggyback（程序集名 / 插件 GUID / 其配置文件任一命中）时，连「昏迷后苏醒」也不再拆散，只在被背者死亡、背人者倒地、背人者消失时清理。
 - **性能**（效果不变）**表情处理热路径改为稳态零分配**：跳舞动作名与转职表情配置只在配置变化时解析一次；转职匹配走无分配的快路径；【舞动青春】把冷却检查提前到扫描玩家之前；不再为「全场欢呼」分配半径内角色列表；房间内没有舞王时重复表情直接丢弃。舞王会高频连续做表情、且【全场欢呼】会把一条表情放大成 N 条，因此这条优化对实际帧率有意义。诊断日志仍只在每个**不同**表情名首次出现时打印一次。
 - **调整** **职业介绍板块从职业分配面板下方移至屏幕左上角**：人数较多、右上角面板很长时，介绍板块不再被挤出屏幕。该板块显示期间，原本在左上角的提示信息会**临时下移到它下方**，避免重叠；面板关闭后提示立即回到左上角。附属模组采用相同布局。
+
+## 1.0.9
+
+### English
+
+- **Fixed** MilesSoul first-pickup curse reduction could be incomplete or later undone on clients.
+    - Root cause: the host-issued reduction reaches the owner before the updated curse value is synchronized back to the host. The curse-protection logic could accept the host's stale pre-reduction value as its baseline during the allow window, and consecutive reductions could also be calculated from that old value; the later protection pass could then restore the wrong amount. An unfinished initial-curse retry could also write its old absolute target over the pickup reduction.
+    - The mod now keeps an expected reduction target until the synchronized value confirms it, calculates consecutive reductions from the expected target rather than the stale copy, and shifts that target if a genuine curse increase arrives meanwhile. Stale copies can no longer raise the baseline or trigger a restoration while confirmation is pending; any pending initial-curse target is lowered by the same amount.
+- **New** Reliable MilesSoul gem settlement for clients running either the **main mod** or the **client addon** (addon v1.0.6+; the other client need only have one of them enabled).
+    - Root cause of the previous high-frequency-use failures: Scout gem actions execute on the owner's client, while the host used a separate petrify-increase heuristic and delayed absolute writebacks for clients. A writeback based on the host's delayed copy could overwrite petrify increases still in transit, causing extra reduction or even a complete clear.
+    - Both mods now compile the same local detection and settlement source. The host synchronizes the effective MilesSoul configuration, the owner client applies hunger / petrify / extra-stamina changes directly through the original local paths, and usage reports are sent back only for 【Hindrance of the Souls】 counts. The host skips duplicate effect settlement for clients that completed the capability handshake.
+    - Photon event 197 kinds 7 / 8 / 9 / 10 carry the targeted hello, configuration, usage report and configuration ACK. The host switches to local-client settlement only after the ACK, so uses during the handshake remain covered by the host fallback. This gameplay sync is independent of the class-display sync option; older clients without either mod remain on the host fallback.
+- **Changed** For clients without either mod, 【Scout's Perseverance】【Scout's Initiative】【Scout's Hospitality】【Scout's Ambition】 now have a **1.5 s trigger cooldown per player + gem**. Using that gem during its cooldown does not trigger the class effect (including petrify reduction) or count toward the gem-use tally. Reliable RPCs, feeding and the petrify heuristic all pass through the same guard, so none can bypass it. The existing config entry `sealPowerClientDetectCooldown` / `封印之力-客机判定冷却` now defaults to 1.5.
+- **Changed** Astronaut 【Wow, NASA Really Is Great】 no longer adds extra curse. Its status snapshot and cooldown arrays now contain only cobweb and flytrap; the existing increase-delta detection, post-bonus baseline update and independent per-status cooldown remain unchanged for those two statuses.
+    - Root cause of the reported 10 → 25 curse case: the host polled delayed remote curse copies and could reinterpret the same increase after its own +2.5 bonus, applying the bonus repeatedly. Removing curse from this polling path ensures Leader 【Morale】 only applies its intended +10.
+- **Fixed** MilesSoul 【Rule Zero】 now grants the +30 extra stamina **after** the petrify added by feeding 【Scout's Perseverance】 to a downed player has been cleared.
+    - Root cause: the old order granted extra stamina immediately and performed the delayed petrify correction afterwards. The subsequent petrify / stamina-cap update could clamp the freshly granted extra stamina. Both host and shared client settlement now confirm the pre-use petrify target first and grant the configured extra stamina once, only after that confirmation.
+- **Changed** Astronaut 【Space Food Safety】 default poison for eating unqualified food is now **20** (`0.20`), up from 10 (`0.10`). The Mushroom Glow / Cure-All exemptions and packaged-or-cooked checks are unchanged.
+- **Optimised** MilesSoul client sync (no gameplay change): the host no longer pushes the same state to every registered client every 2 s — the client's own 2 s hello already triggers a reply, and a low-frequency pass now only prunes stale registrations. The effective config string is cached and rebuilt only when a value changes; clients skip re-parsing an unchanged state and re-ACK every 8 s (within the 12 s host timeout); scene checks are cached and hello is limited to gameplay. Handshake / ACK state is also cleared per run, so a new run cannot inherit a stale "settle locally" flag.
+- **Fixed** The top-left notification box could be only one line tall on some clients, so a two-line bilingual notice was clipped to "English lower half + Chinese upper half".
+    - Root cause: the IMGUI fallback (used when the native TMP font overlay is unavailable) drew **each queue entry** at a fixed single-line height. One entry may contain an explicit newline (English + Chinese) or wrap on a narrow screen; with middle-left alignment the taller text was centred and clipped symmetrically. The box height had the same defect.
+    - Each entry is now measured with `GUIStyle.CalcHeight` and the box height is the sum of the real entry heights; word wrapping is enabled and the fallback text is no longer bold, matching the native overlay. The native TMP path already measured the joined text correctly.
+
+### 中文
+
+- **修复** 残魂在客机首次拾取童军宝石时，减诅咒可能不完整或随后被撤销的问题。
+    - 根因：主机下发的减量先到达客机属主端，更新后的诅咒值再异步同步回主机。诅咒保护逻辑会在允许窗口内把主机尚未更新的旧高值重新接受为保护基准，连续减量也可能继续以该旧值计算；后续保护流程便可能恢复成错误数值。尚未结束的初始诅咒补发也可能用旧绝对目标覆盖首拾减量。
+    - 现在会登记预期减量目标并等待同步值确认；连续减量从预期目标累减，不再使用滞后副本；等待期间若有真实新增诅咒，则等量平移目标。确认前旧副本不会抬升基准，也不会触发恢复；未完成的初始诅咒目标也会同步减量。
+- **新增** 残魂客机可靠本机结算：客机只要安装并启用**主模组或附属模组其中之一**（附属模组需 v1.0.6+），即改用与主模组客机模式相同的实现。
+    - 旧高频使用问题的根因：童军宝石动作在属主客户端本地执行，主机却对客机另用「石化增量启发式 + 延迟绝对写回」。主机按滞后副本写回时，可能覆盖仍在网络传输中的石化增量，造成额外减石化乃至清零。
+    - 主模组与附属模组现在编译同一份本机检测 / 结算源码。主机同步实际生效的残魂配置，属主客户端直接走原版本地路径修改饥饿 / 石化 / 额外体力；使用报告只用于主机的【众魂阻挠】次数累计。完成能力握手的客机，主机不再重复结算其宝石效果。
+    - Photon 事件 197 的 Kind 7 / 8 / 9 / 10 分别承载定向 Hello、配置、使用报告与配置 ACK；主机收到 ACK 后才切换到客机本机结算，握手期间的使用仍由主机兜底。该玩法同步不受「职业显示-网络同步」开关影响。未安装任一模组的客机仍由主机兜底。
+- **调整** 对未安装任一模组的客机，【童军的毅力】【童军的进取】【童军的盛情】【童军的野心】新增**每名玩家、每件宝石各自 1.5 秒触发冷却**。冷却期间使用该宝石不会触发对应职业效果（包括减石化），也不计入宝石使用次数。可靠 RPC、喂食与石化启发式统一经过该限制，无法绕过；原配置项 `sealPowerClientDetectCooldown` / `封印之力-客机判定冷却` 默认值改为 1.5。
+- **调整** 太空人【我去，老美的NASA这么厉害】删除「获得诅咒时额外加诅咒」。状态快照与冷却数组现在只包含蛛网、捕蝇草；这两种状态仍保留原有的增量检测、追加后基线后移与各自独立冷却。
+    - 「士气 +10 最终变 25」的根因：主机轮询客机延迟同步的诅咒副本，可能在自身追加 +2.5 后再次把同一笔增加识别成新增，反复追加。删除该诅咒轮询路径后，领袖【士气】只保留其应有的 +10。
+- **修复** 残魂【零号守则】的 +30 额外体力改为**在本次喂食毅力产生的石化已等量清除之后**发放。
+    - 根因：旧顺序先立即发放额外体力，再延迟校正石化；随后的石化 / 体力上限更新会把刚获得的额外体力 clamp 掉。主机与共用客机结算现在都先确认石化回到使用前目标，再且仅再发放一次配置的额外体力。
+- **调整** 太空人【太空食品安全】食用不符合条件食物的默认中毒由 **10（0.10）改为 20（0.20）**；诡异菇 / 万灵药豁免与包装食物 / 熟食判定不变。
+- **优化** 残魂客机同步（不改变任何效果）：主机不再每 2 秒向所有已注册客机重复推送同一份状态 —— 客机自身的 2 秒 Hello 已会触发一次回复，低频轮询现在只负责清理过期注册项。生效配置串改为缓存（仅在数值变化时重建）；客机对内容未变的状态跳过 Split / 逐项解析，ACK 改为每 8 秒一次（仍小于主机 12 秒超时）；场景判定改为 0.5 秒缓存，Hello 仅在关卡内发送。握手 / ACK 状态也会在每局开始与结束时清空，避免新一局继承上一局残留的「本机结算」资格。
+- **修复** 部分客机上左上角提示窗口高度不足，导致中英双语两行提示被裁成「英文只露下半、中文只露上半」。
+    - 根因：原生 TMP 字体叠加层不可用时会走 IMGUI 回退绘制，而该路径把**每一条提示**都按固定单行高度绘制。一条提示本身可能含换行（英文 + 中文两行），在窄屏上还可能继续折行；配合垂直居中，超高的文本就被上下对称裁掉。窗口背景高度也有同样缺陷。
+    - 现在逐条用 `GUIStyle.CalcHeight` 测量实际排版高度，窗口高度取各条实际高度之和；同时启用自动折行，并取消回退文本的加粗（与原生叠加层一致）。原生 TMP 路径本就会按整段文本测量，无需改动。

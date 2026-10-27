@@ -6,7 +6,8 @@
 
 ## English
 
-> A **PEAK** mod. At the start of every run, every player is **randomly assigned** a **class**. All logic runs on the **host (MasterClient) only** and reaches every player through PEAK's own networked RPCs — **clients need not install anything**.
+> A **PEAK** mod. At the start of every run, every player is **randomly assigned** a **class**. The host drives class assignment and the host-side effects through PEAK's networked RPCs — **clients need not install anything**. 
+> Clients with the main mod or companion addon additionally settle their own MilesSoul gem effects locally using the host's synchronized configuration.
 
 ### Highlights
 
@@ -17,7 +18,7 @@
 - **Class change**: eat a configurable item (default: the Glow Mushroom) to change your class.
 - **Host-screen UI**: a class-assignment panel plus effect notifications (toasts).
 - **Overhead class prefix**: shows `【Class】Nickname` above players (drawn locally on each client).
-- **Optional host→client broadcast** (Photon custom event `197`): players with the companion **client display mod** installed can see class info on **their own screen**.
+- **Optional client support** (Photon custom event `197`): the companion addon shows class info and gives MilesSoul clients the same local gem-action detection and settlement as the main mod's client mode.
 - **Fully configurable**, and the config file is **bilingual**: Chinese for a Chinese game language, English for every other language.
 
 ### Requirements
@@ -31,7 +32,7 @@
 2. Put the mod file `com.peakmodding.RollOfTheScout.dll` into `PEAK/BepInEx/plugins/`.
 3. Launch the game and create a room — everyone is automatically assigned a class at the start of each run.
 
-Clients install **nothing**. (Optionally, a separate **client display mod** can be installed on clients so they can see class info on their own screen.)
+Clients install **nothing** by default. Optionally, the main mod or the companion addon can be installed for class display and more reliable local MilesSoul gem settlement.
 
 ### Configuration
 
@@ -73,7 +74,7 @@ Output: `Mod/RollOfTheScout/bin/Release/com.peakmodding.RollOfTheScout.dll`.
 
 ### Known constraints
 
-- Class effects are driven entirely by the host; a client without any mod sees no class text information (the effects still apply).
+- Except for the documented local MilesSoul path on clients running either mod, class effects are host-driven; an unmodded client sees no class text information (the effects still apply).
 - Some effects can only be approximated because of engine limits (e.g. passive multipliers use "poll + compensating delta").
 - Class display is per-client local UI; there is no way to push arbitrary text into an unmodded client's screen.
 
@@ -118,7 +119,8 @@ Welcome to join the PEAK community group ~ (QQ group: **814891614**; mod updates
 
 ## 中文
 
-> 一个 **PEAK** 模组。每局游戏开始时，为每名玩家**随机分配**一个**职业**。所有逻辑只运行在**房主（MasterClient）**上，并通过 PEAK 原版网络 RPC 作用于全体玩家 —— **客机无需安装**。
+> 一个 **PEAK** 模组。每局游戏开始时，为每名玩家**随机分配**一个**职业**。职业分配与主机侧效果由**房主（MasterClient）**通过 PEAK 网络 RPC 驱动 —— **客机无需安装**。
+> 若客机安装主模组或配套附属模组，残魂宝石效果会按主机同步的配置在本人客户端结算。
 
 ### 特色
 
@@ -129,7 +131,7 @@ Welcome to join the PEAK community group ~ (QQ group: **814891614**; mod updates
 - **转职机制**：食用可配置的物品（默认「诡异菇」）即可更换职业。
 - **主机屏幕 UI**：职业分配面板 + 效果提示（Toast）。
 - **头顶职业前缀**：在玩家头顶显示「【职业】昵称」（各客户端本地绘制）。
-- **可选的主机→客机广播**（Photon 自定义事件 `197`）：装了**配套客机显示模组**的玩家可在**自己屏幕**上看到职业信息。
+- **可选客机支持**（Photon 自定义事件 `197`）：配套附属模组可显示职业信息，并让残魂客机使用与主模组客机模式相同的本机宝石检测与结算。
 - **全部可配置**，且配置文件为**中英双语**：游戏语言为中文时用中文配置，其它语言一律使用英文。
 
 ### 环境要求
@@ -143,7 +145,7 @@ Welcome to join the PEAK community group ~ (QQ group: **814891614**; mod updates
 2. 将模组文件 `com.peakmodding.RollOfTheScout.dll` 放入 `PEAK/BepInEx/plugins/`；
 3. 启动游戏，并创建房间 —— 每局开始时将会为全员自动分配职业。
 
-客机**什么都不用装**。（可选：另有一个**客机显示模组**可装在客机端，让客机在自己屏幕上看到职业信息。）
+客机默认**什么都不用装**。也可选装主模组或配套附属模组，以获得职业显示与更可靠的残魂本机宝石结算。
 
 ### 模组配置
 
@@ -186,7 +188,7 @@ dotnet build Mod/RollOfTheScout/RollOfTheScout.csproj -c Release
 
 ### 已知约束
 
-- 职业效果全部由主机驱动；未装任何模组的客机看不到职业文字信息（效果依旧生效）。
+- 除安装任一模组的客机使用文档所述残魂本机路径外，职业效果由主机驱动；未装模组的客机看不到职业文字信息（效果依旧生效）。
 - 部分效果受引擎限制只能近似实现（如被动倍率类采用「轮询 + 补偿增量」）。
 - 职业显示属于各客户端本地 UI；原版没有「把任意文本送到未装模组客机屏幕」的通道。
 

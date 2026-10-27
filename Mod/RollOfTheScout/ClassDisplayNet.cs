@@ -16,7 +16,7 @@ namespace RollOfTheScout
     /// 由接收端在**自己屏幕上**本地显示。
     ///
     /// 硬约束（不得违背）：
-    /// · 只有主机（MasterClient）发送；客机侧只接收、从不发送（客机不得影响主机）；
+    /// · 显示数据只由主机（MasterClient）发送；残魂本机握手 / 使用报告只发给主机并仅用于该职业结算；
     /// · 客机**不装任何模组时本广播被直接忽略**，因此「客机零安装」的主线不受影响；
     /// · 广播默认不发给发送者（<c>ReceiverGroup.Others</c>），主机自身始终用本地账本显示。
     ///
@@ -68,6 +68,16 @@ namespace RollOfTheScout
         /// 用于「只有相应职业的玩家才看得到」的提醒（如舞王 / 待皓的强制后空翻预警）。
         /// </summary>
         public const byte KindTargetedToast = 6;
+
+        /// <summary>残魂本机能力握手（客机 → 主机）与使用报告（主机据此只计数，不重复结算）。</summary>
+        public const byte KindMilesClientHello = 7;
+        public const byte KindMilesUsageReport = 9;
+
+        /// <summary>残魂本机已收到职业 / 配置的确认（客机 → 主机）；确认前仍由主机兜底。</summary>
+        public const byte KindMilesClientReady = 10;
+
+        /// <summary>残魂本机职业 / 生效配置（主机 → 指定客机）。</summary>
+        public const byte KindMilesGameplayState = 8;
 
         /// <summary>关键词 / 简介文本的保底重发间隔（秒）。仅为让中途加入的客机也能收到；文本是静态的，无需频繁发送。</summary>
         public const float ClassTextResendSeconds = 30f;
@@ -160,6 +170,27 @@ namespace RollOfTheScout
             if (!ShouldBroadcast()) return;
             if (string.IsNullOrEmpty(text)) return;
             Send(KindToast, text);
+        }
+
+        /// <summary>
+        /// 向指定客机下发残魂职业与生效配置。该通道属于玩法同步，不受「职业显示-网络同步」开关影响。
+        /// </summary>
+        public static void SendMilesGameplayState(int actorNumber, string data)
+        {
+            if (!PhotonNetwork.InRoom || !PhotonNetwork.IsMasterClient) return;
+            if (actorNumber <= 0 || string.IsNullOrEmpty(data)) return;
+            try
+            {
+                PhotonNetwork.RaiseEvent(
+                    EventCode,
+                    new object[] { ModId, KindMilesGameplayState, data },
+                    new RaiseEventOptions { TargetActors = new[] { actorNumber } },
+                    SendOptions.SendReliable);
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogWarning($"[RollOfTheScout] 残魂本机配置同步失败：{e.Message}");
+            }
         }
 
         private static bool ShouldBroadcast()

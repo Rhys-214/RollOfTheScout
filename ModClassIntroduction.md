@@ -184,8 +184,9 @@ Class introduction — applies to the **RollOfTheScout** mod, version **1.0.7** 
     - 【Scout's Initiative】Each use immediately gives −5 petrify, −5 hunger and +5 extra stamina; the first pickup in this run gives −5 curse.
     - 【Scout's Hospitality】Each use (that successfully copies an item) immediately gives −20 petrify, −10 hunger and +20 extra stamina; the first pickup in this run gives −5 curse.
     - 【Scout's Ambition】Each use immediately gives −25 petrify, −10 hunger and +25 extra stamina; the first pickup in this run gives −5 curse.
+    - For a client without the main mod or the client addon, each of these four use effects has a 1.5 s cooldown per gem; using that gem during its cooldown does not trigger the effect. A client with either mod installed and enabled instead settles these effects locally with the host-synced configuration.
     - 【Scout's Strength】After all four of the above Scout gem items have been picked up, an additional −10 curse, all debuffs other than curse are cleared (petrify included), and you immediately gain one invincibility and one sprint.
-- 【Rule Zero】Every 30 s your player count within 30 m (excluding yourself) is checked: for each player, +5 extra stamina; each time you use Scout's perseverance on another fainted player, your petrify does not increase (the petrify that would have been added by that use is immediately cleared by the same amount, and you gain an extra +30 extra stamina), and that use does not count towards 【Hindrance of the Souls】' tally; after you have picked up Scout's perseverance, each time a player faints you immediately gain one invincibility and teleport to the fainted player, and this effect by default has a 10 s trigger cooldown; for each player death, +10 injury to yourself.
+- 【Rule Zero】Every 30 s your player count within 30 m (excluding yourself) is checked: for each player, +5 extra stamina; each time you use Scout's perseverance on another fainted player, your petrify does not increase (the petrify added by that use is immediately cleared by the same amount, and +30 extra stamina is granted only after that clearance), and that use does not count towards 【Hindrance of the Souls】' tally; after you have picked up Scout's perseverance, each time a player faints you immediately gain one invincibility and teleport to the fainted player, and this effect by default has a 10 s trigger cooldown; for each player death, +10 injury to yourself.
 - 【Seal Released】After entering the Nadir and (any player) freeing the Scoutmaster's soul, all debuffs (curse and petrify included) of every player present (including yourself) are immediately cleared, and +100 extra stamina.
 27. **Qu**
 - Keywords: Early bug · Frequent climbing slips · Decomposing junk rewards · Contagious reclass · Same-class buffs · Spore immunity · Bug-eating penalty
@@ -201,8 +202,8 @@ Class introduction — applies to the **RollOfTheScout** mod, version **1.0.7** 
     - "Space drift: balloons are tied on periodically; balloons and bunches of balloons cannot be picked up; picked-up items may become rocket packs or jetpacks; only packaged or cooked food, otherwise poison; some heat/cold resistance but certain debuffs hit harder."
 - 【Weightless】At the start you have 2 balloons tied on, and every 2 min 2 more balloons are tied on; picking up a balloon or a bunch of balloons makes it vanish directly.
 - 【Fly Away】Picking up an item other than food items and some special items has a 20% chance to become a rocket pack and a 10% chance to become a jetpack (when the roll succeeds, the picked-up item vanishes and a rocket pack or jetpack spawns at your feet) (by default some special items are exempt: glow mushroom, rocket pack, jetpack, signal stick, strange crystal, Scout's perseverance, Scout's initiative, Scout's hospitality, Scout's ambition, Scout's glory).
-- 【Space Food Safety】You can only eat packaged food and cooked food; each time you eat a food that does not qualify, +10 poison (glow mushroom and panacea excluded).
-- 【Wow, NASA Really Is Great】Every 5 s, −5 heat and −5 cold; each time you gain (an increase of) cobweb, flytrap or curse, an additional +2.5 of the corresponding value.
+- 【Space Food Safety】You can only eat packaged food and cooked food; each time you eat a food that does not qualify, +20 poison (glow mushroom and panacea excluded).
+- 【Wow, NASA Really Is Great】Every 5 s, −5 heat and −5 cold; each time you gain (an increase of) cobweb or flytrap, an additional +2.5 of the corresponding value.
 29. **Langwang**
 - Keywords: Periodic kingberries · Eating rewards · Non-berry penalty · Injury per meal · Special reclass
     - "Big-berry addiction: green/purple kingberries on a timer; green grants a sprint, purple grants infinite stamina; other food adds drowsiness; every meal costs injury; others who chain-eat kingberries are forced to merge."
@@ -399,8 +400,9 @@ Class introduction — applies to the **RollOfTheScout** mod, version **1.0.7** 
     - 【童军的进取】每次使用后立即-5石化、-5饥饿、+5额外体力；本局首次拾取时-5诅咒
     - 【童军的盛情】每次使用（且成功复制了物品）后立即-20石化、-10饥饿、+20额外体力；本局首次拾取时-5诅咒
     - 【童军的野心】每次使用后立即-25石化、-10饥饿、+25额外体力；本局首次拾取时-5诅咒
+    - 未安装主模组或附属模组的客机，上述四种使用效果按宝石分别有1.5秒触发冷却，冷却期间使用该宝石不会触发对应效果；安装并启用任一模组的客机则按主机同步的配置在本机结算这些效果
     - 【童军的力量】上述四种童军宝石道具都拾取过后，额外再-10诅咒，并清除诅咒以外的所有负面状态（包括石化）、立即获得一次无敌效果与加速效果
-- 【零号守则】每30秒检测一次自身半径30米内的玩家人数（不包括自己）：每有一名玩家，+5额外体力；每次对其他昏迷的玩家使用童军的毅力时，不会使自身石化值增加（因该次使用而增加的石化值会立即等量清除，并再+30额外体力），且该次使用不计入【众魂阻挠】的次数累计；在拾取过童军的毅力后，每有一名玩家昏迷，自身将立即获得一次无敌效果并传送至昏迷玩家处，此效果默认有10秒的触发冷却；每有一名玩家死亡，自身+10损伤
+- 【零号守则】每30秒检测一次自身半径30米内的玩家人数（不包括自己）：每有一名玩家，+5额外体力；每次对其他昏迷的玩家使用童军的毅力时，不会使自身石化值增加（因该次使用而增加的石化值会立即等量清除，确认清除后再+30额外体力），且该次使用不计入【众魂阻挠】的次数累计；在拾取过童军的毅力后，每有一名玩家昏迷，自身将立即获得一次无敌效果并传送至昏迷玩家处，此效果默认有10秒的触发冷却；每有一名玩家死亡，自身+10损伤
 - 【封印解放】进入天底，并且（有任意玩家）解放童军领队的灵魂后，立即清除在场所有玩家（包括自身）的所有负面状态（包括诅咒与石化）、+100额外体力
 27. **区**
 - 关键词：早起虫儿、攀爬高频脱手、分解垃圾奖励、感染转职、同类增益、免疫孢子、食虫惩罚
@@ -416,8 +418,8 @@ Class introduction — applies to the **RollOfTheScout** mod, version **1.0.7** 
     - “太空漂流：身上定时绑上气球；无法拾取气球/一束气球；拾取物品概率变为火箭背包/喷气背包；只吃包装食品或熟食，否则中毒；对冷热有一定抗性，但部分负面状态会额外加重”
 - 【轻飘飘】开局初始自身会绑上2个气球，之后每过2分钟会再次绑上2个气球；拾取气球或一束气球会直接消失
 - 【飞起来】拾取非食物物品与部分特殊物品以外的物品，有20%概率变为火箭背包，10%概率变成喷气背包（概率判定成功时，拾取物品消失，并在脚下生成一个火箭背包或喷气背包）（默认部分特殊物品不受影响：诡异菇、火箭背包、喷气背包、信号棒、奇怪水晶、童军的毅力、童军的进取、童军的盛情、童军的野心、童军的荣耀）
-- 【太空食品安全】只能食用包装食物与烤熟的食物，每次食用不符合条件的食物会+10中毒（不包括诡异菇、万灵药）
-- 【我去，老美的NASA这么厉害】每5秒，-5炎热、-5寒冷；每次获得（有增加）蛛网、捕蝇草、诅咒时，额外+2.5相应值
+- 【太空食品安全】只能食用包装食物与烤熟的食物，每次食用不符合条件的食物会+20中毒（不包括诡异菇、万灵药）
+- 【我去，老美的NASA这么厉害】每5秒，-5炎热、-5寒冷；每次获得（有增加）蛛网、捕蝇草时，额外+2.5相应值
 29. **榔王**
 - 关键词：周期荔莓、食用奖励、非莓惩罚、进食损伤、特殊转职
     - “大果嚼嚼：定时获得青/紫荔莓；食用青荔莓获得冲刺效果、紫荔莓则给无限体力；食用其他食物加困倦；每次进食固定损伤；他人多次连吃荔莓会被强制同化”

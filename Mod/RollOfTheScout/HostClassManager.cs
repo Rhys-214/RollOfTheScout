@@ -716,6 +716,10 @@ namespace RollOfTheScout
         // 法师·魔法卷轴·净化的持续期间内，允许诅咒被降低并同步更新记录值（否则净化会被保护逻辑立刻撤销）。
         private readonly Dictionary<string, float> _milesCurseAllowUntil = new Dictionary<string, float>();
 
+        // 自身职业减诅咒尚未被主机副本确认时，暂停旧副本驱动的恢复；若同时出现真实新增诅咒，则平移预期目标。
+        private readonly HashSet<string> _milesCurseReducePending = new HashSet<string>();
+        private readonly Dictionary<string, float> _milesCurseReduceLastObserved = new Dictionary<string, float>();
+
         // 【受诅残魂】诅咒保护轮询计时器。
         private float _milesCurseTimer;
 
@@ -828,6 +832,11 @@ namespace RollOfTheScout
         // 若每帧都发 RPC 会白刷网络包（实测一次消耗会连续打出 10 行日志），故按 0.25s 节流。
         private readonly Dictionary<string, float> _milesZeroPetrifyNextSend = new Dictionary<string, float>();
 
+        // 额外体力必须在石化已经回到目标值之后发放，否则随后的 ClampStamina 会按新高石化上限把它顶掉。
+        private readonly Dictionary<string, float> _milesZeroPetrifyFireAt = new Dictionary<string, float>();
+        private readonly Dictionary<string, float> _milesZeroExtraStamina = new Dictionary<string, float>();
+        private readonly HashSet<string> _milesZeroExtraStaminaApplied = new HashSet<string>();
+
         /// <summary>零号守则「石化校正」的下发节流间隔（秒）。</summary>
         private const float MilesZeroPetrifySendInterval = 0.25f;
 
@@ -872,6 +881,21 @@ namespace RollOfTheScout
         // 主机借此即可还原「谁在喂谁、喂的哪件宝石」，从而把「喂给昏迷者」与「喂给未昏迷者」精确分开。
         private readonly Dictionary<string, MilesFeedIntent> _milesFeedIntent = new Dictionary<string, MilesFeedIntent>();
 
+        // 装有主模组或新版附属模组的客机：ActorNumber → 最近一次能力握手 / 配置 ACK。
+        // 只有收到 ACK 后才由属主端执行共用残魂结算；主机保留众魂阻挠计数，不重复施加效果。
+        private readonly Dictionary<int, float> _milesLocalClients = new Dictionary<int, float>();
+        private readonly Dictionary<int, float> _milesLocalReady = new Dictionary<int, float>();
+        private float _nextMilesPruneTime;
+        private const float MilesLocalClientTimeout = 12f;
+        /// <summary>残魂本机客户端注册表的清理间隔（秒）；状态本身由客机 Hello 触发下发，不再周期性群发。</summary>
+        private const float MilesLocalPruneInterval = 5f;
+
+        // 残魂玩法配置串缓存：配置值未变时复用同一字符串，避免每次握手 / 下发都为每名客机重建 13 段文本。
+        private readonly float[] _milesCfgScratch = new float[12];
+        private readonly float[] _milesCfgLast = new float[12];
+        private bool _milesCfgRuleZeroLast;
+        private string _milesCfgString;
+
         // 【封印解放】本局是否已触发（解放童军领队灵魂后只结算一次）。
         private bool _milesSealFreedDone;
 
@@ -911,15 +935,15 @@ namespace RollOfTheScout
         /// <summary>本局已发放过「开局初始气球」的太空人稳定标识。</summary>
         private readonly HashSet<string> _astronautInitialBalloons = new HashSet<string>();
 
-        /// <summary>【NASA】玩家稳定标识 → 上一次轮询的「蛛网 / 捕蝇草 / 诅咒」快照（追加值会后移快照，避免自触发）。</summary>
+        /// <summary>【NASA】玩家稳定标识 → 上一次轮询的「蛛网 / 捕蝇草」快照（追加值会后移快照，避免自触发）。</summary>
         private readonly Dictionary<string, float[]> _nasaBonusSnapshot = new Dictionary<string, float[]>();
 
         /// <summary>
-        /// 【NASA】玩家稳定标识 → 三种状态各自的「额外加成冷却结束时刻」（与 <see cref="NasaBonusTypes"/> 同下标）。
+        /// 【NASA】玩家稳定标识 → 两种状态各自的「额外加成冷却结束时刻」（与 <see cref="NasaBonusTypes"/> 同下标）。
         ///
         /// 为什么需要：主机读到的是远端角色**同步回来**的状态值，存在延迟。追加 +2.5 后若把快照写成
         /// 「期望值」、而随后又读到尚未同步的旧值，就会把「同一笔增加」反复识别成新的增加，
-        /// 表现为「诅咒增加一次 → 无限连加」（实测日志可见连续多条「获得 2.5 点，额外追加 2.5 点」）。
+        /// 表现为「状态增加一次 → 无限连加」（实测日志可见连续多条「获得 2.5 点，额外追加 2.5 点」）。
         /// 因此每次触发后在该状态上写入一段冷却：冷却期内既不检测、也不追加（只让基线向上跟随），
         /// 等同步稳定后再恢复正常判定。
         /// </summary>
@@ -986,12 +1010,11 @@ namespace RollOfTheScout
             return _cookFoodPool;
         }
 
-        /// <summary>【NASA】额外加成覆盖的状态：蛛网 / 捕蝇草 / 诅咒。</summary>
+        /// <summary>【NASA】额外加成只覆盖蛛网 / 捕蝇草；诅咒不再参与检测或追加。</summary>
         private static readonly CharacterAfflictions.STATUSTYPE[] NasaBonusTypes =
         {
             CharacterAfflictions.STATUSTYPE.Web,      // 蛛网
             CharacterAfflictions.STATUSTYPE.FlyTrap,  // 捕蝇草
-            CharacterAfflictions.STATUSTYPE.Curse,    // 诅咒
         };
 
         // ===============================================================
@@ -1205,6 +1228,10 @@ namespace RollOfTheScout
         /// <summary>强制后空翻预警（中英双语；**只发给对应职业的玩家本人**，见 ShowToastTargeted）。</summary>
         private const string BackflipWarnText = "！即将强制后空翻！\n! Forced backflip incoming !";
         private GUIStyle _toastStyle;
+        /// <summary>IMGUI 回退路径：每条提示的实际排版高度（复用列表，避免每帧分配）。</summary>
+        private readonly List<float> _toastHeights = new List<float>();
+        /// <summary>IMGUI 回退路径：复用的文本测量对象。</summary>
+        private readonly GUIContent _toastMeasure = new GUIContent();
 
         /// <summary>
         /// IMGUI 回退路径：「职业介绍」板块的底边（0 = 本帧未绘制）。
@@ -1993,6 +2020,14 @@ namespace RollOfTheScout
                 PublishClassSnapshot();
             }
 
+            // 残魂本机客户端：状态由客机周期 Hello 触发下发（不再每 2 秒向全体群发一次），
+            // 这里只做低频清理，移除已离开 / 停止握手的注册项。
+            if (Time.time >= _nextMilesPruneTime)
+            {
+                _nextMilesPruneTime = Time.time + MilesLocalPruneInterval;
+                PruneMilesLocalClients();
+            }
+
             // 「开局 / 每层发放」类效果只作用于「已复活到位」的玩家：中途加入者先以死亡灵魂加入，
             // 复活前发放的物品会被原版 DropAllItems 清掉、状态会被 ClearAllStatus 清掉且不再补发。
             // 因此把仍在 _joinSouls 里的角色从发放名单中剔除（其余每帧逻辑仍作用于全部角色）。
@@ -2165,6 +2200,11 @@ namespace RollOfTheScout
             _bandTransferStreak.Clear();
             _milesCurseRecord.Clear();
             _milesCurseAllowUntil.Clear();
+            _milesCurseReducePending.Clear();
+            _milesCurseReduceLastObserved.Clear();
+            _milesLocalClients.Clear();
+            _milesLocalReady.Clear();
+            _nextMilesPruneTime = 0f;
             _milesCurseFixNext.Clear();
             _milesCurseFixTries.Clear();
             _milesLevelBonusIncluded.Clear();
@@ -2184,6 +2224,9 @@ namespace RollOfTheScout
             _milesZeroPetrifyTarget.Clear();
             _milesZeroPetrifyUntil.Clear();
             _milesZeroPetrifyNextSend.Clear();
+            _milesZeroPetrifyFireAt.Clear();
+            _milesZeroExtraStamina.Clear();
+            _milesZeroExtraStaminaApplied.Clear();
             _milesPreUsePetrify.Clear();
             _milesFeedIntent.Clear();
             _milesNearbyTimer = 0f;
@@ -2309,6 +2352,11 @@ namespace RollOfTheScout
             _bandTransferStreak.Clear();
             _milesCurseRecord.Clear();
             _milesCurseAllowUntil.Clear();
+            _milesCurseReducePending.Clear();
+            _milesCurseReduceLastObserved.Clear();
+            _milesLocalClients.Clear();
+            _milesLocalReady.Clear();
+            _nextMilesPruneTime = 0f;
             _milesCurseFixNext.Clear();
             _milesCurseFixTries.Clear();
             _milesLevelBonusIncluded.Clear();
@@ -2328,6 +2376,9 @@ namespace RollOfTheScout
             _milesZeroPetrifyTarget.Clear();
             _milesZeroPetrifyUntil.Clear();
             _milesZeroPetrifyNextSend.Clear();
+            _milesZeroPetrifyFireAt.Clear();
+            _milesZeroExtraStamina.Clear();
+            _milesZeroExtraStaminaApplied.Clear();
             _milesPreUsePetrify.Clear();
             _milesFeedIntent.Clear();
             _milesNearbyTimer = 0f;
@@ -6380,7 +6431,7 @@ namespace RollOfTheScout
             // ---- 炮手·炸膛：对比上次轮询的损伤快照，把「新受到的损伤」转化为炸药 ----
             if (anyGunner) PollGunnerInjury(characters);
 
-            // ---- 太空人·NASA：对比上次轮询快照，为「新获得的蛛网 / 捕蝇草 / 诅咒」追加同种状态 ----
+            // ---- 太空人·NASA：对比上次轮询快照，为「新获得的蛛网 / 捕蝇草」追加同种状态 ----
             if (anyAstronaut) PollAstronautExtraStatus(characters);
 
             void ApplyEmpathy()
@@ -8216,6 +8267,8 @@ namespace RollOfTheScout
             string id = _ledger.IdOf(character);
             if (string.IsNullOrEmpty(id)) return;
             _milesCurseRecord[id] = Mathf.Clamp01(value);
+            _milesCurseReducePending.Remove(id);
+            _milesCurseReduceLastObserved.Remove(id);
             ResetMilesCurseFixState(id);   // 目标值变了：允许保护逻辑重新快速尝试
         }
 
@@ -8245,10 +8298,20 @@ namespace RollOfTheScout
 
             string id = _ledger.IdOf(character);
             if (string.IsNullOrEmpty(id)) return;
-            if (_milesCurseRecord.TryGetValue(id, out float rec))
-                _milesCurseRecord[id] = Mathf.Max(0f, rec - amount);
-            else
-                _milesCurseRecord[id] = 0f;
+            // 开局初始诅咒的补发待办也必须同步减量，否则随后一次绝对校正会把首拾 -5 覆盖掉。
+            if (_initialCurse.TryGetValue(id, out var initialGrant))
+                initialGrant.Target = Mathf.Max(0f, initialGrant.Target - amount);
+
+            // 以既有保护基准为准；尚未登记时才读取当前可见值。若上一笔减量仍待确认，
+            // 必须继续从预期目标累减，不能再次采用同步滞后的旧高值。
+            float visible = HostApi.GetStatus(character, CharacterAfflictions.STATUSTYPE.Curse);
+            bool pending = _milesCurseReducePending.Contains(id);
+            float before = _milesCurseRecord.TryGetValue(id, out float rec) ? rec : visible;
+            if (!pending && visible > before) before = visible;
+            _milesCurseRecord[id] = Mathf.Max(0f, before - amount);
+            _milesCurseReducePending.Add(id);
+            _milesCurseReduceLastObserved.TryGetValue(id, out float lastObserved);
+            _milesCurseReduceLastObserved[id] = Mathf.Max(lastObserved, visible);
 
             _milesCurseAllowUntil.TryGetValue(id, out float until);
             _milesCurseAllowUntil[id] = Mathf.Max(until, Time.time + 3f);
@@ -8502,6 +8565,169 @@ namespace RollOfTheScout
             OnMilesGemUsed(holder, prefab.gameObject.name, usage: usage);
         }
 
+        private bool IsMilesLocalActor(int actorNumber)
+        {
+            return _milesLocalClients.TryGetValue(actorNumber, out float lastSeen)
+                && Time.time - lastSeen <= MilesLocalClientTimeout
+                && PhotonNetwork.CurrentRoom != null
+                && PhotonNetwork.CurrentRoom.GetPlayer(actorNumber) != null;
+        }
+
+        private bool IsMilesLocalReady(int actorNumber)
+        {
+            return IsMilesLocalActor(actorNumber)
+                && _milesLocalReady.TryGetValue(actorNumber, out float readyAt)
+                && Time.time - readyAt <= MilesLocalClientTimeout;
+        }
+
+        private bool IsMilesHandledLocally(Character character)
+        {
+            if (!PhotonNetwork.IsMasterClient || character == null || character.photonView == null) return false;
+            var owner = character.photonView.Owner;
+            return owner != null && !character.photonView.IsMine && IsMilesLocalReady(owner.ActorNumber);
+        }
+
+        private Character FindCharacterByActor(int actorNumber)
+        {
+            var all = Character.AllCharacters;
+            if (all == null) return null;
+            for (int i = 0; i < all.Count; i++)
+            {
+                var c = all[i];
+                var owner = c != null && c.photonView != null ? c.photonView.Owner : null;
+                if (owner != null && owner.ActorNumber == actorNumber) return c;
+            }
+            return null;
+        }
+
+        /// <summary>低频清理：移除已离开房间 / 超过超时未再握手的客机注册项（不发送任何事件）。</summary>
+        private void PruneMilesLocalClients()
+        {
+            if (_milesLocalClients.Count == 0) return;
+            List<int> expired = null;
+            foreach (var kv in _milesLocalClients)
+            {
+                if (!IsMilesLocalActor(kv.Key)) (expired ??= new List<int>()).Add(kv.Key);
+            }
+            if (expired == null) return;
+            foreach (int actor in expired)
+            {
+                _milesLocalClients.Remove(actor);
+                _milesLocalReady.Remove(actor);
+            }
+        }
+
+        private void PublishMilesGameplayState(int actorNumber)
+        {
+            var character = FindCharacterByActor(actorNumber);
+            int classCode = character != null ? (int)_ledger.GetClass(character) : 0;
+            if (classCode != (int)ClassType.MilesSoul) _milesLocalReady.Remove(actorNumber);
+            ClassDisplayNet.SendMilesGameplayState(actorNumber,
+                classCode.ToString(System.Globalization.CultureInfo.InvariantCulture) + "|" + MilesGameplayConfigCached());
+        }
+
+        /// <summary>
+        /// 取残魂玩法配置串（带缓存）：逐项比较配置值，只有实际改动时才重新拼接字符串。
+        /// 该方法在每次客机 Hello（约每 2 秒 / 每名客机）时调用，缓存后稳态零字符串分配。
+        /// </summary>
+        private string MilesGameplayConfigCached()
+        {
+            var s = _milesCfgScratch;
+            s[0] = ModConfig.MilesSoul.HealingPetrify.Value;
+            s[1] = ModConfig.MilesSoul.HealingHunger.Value;
+            s[2] = ModConfig.MilesSoul.SuperJumpPetrify.Value;
+            s[3] = ModConfig.MilesSoul.SuperJumpHunger.Value;
+            s[4] = ModConfig.MilesSoul.SuperJumpExtraStamina.Value;
+            s[5] = ModConfig.MilesSoul.ClonePetrify.Value;
+            s[6] = ModConfig.MilesSoul.CloneHunger.Value;
+            s[7] = ModConfig.MilesSoul.CloneExtraStamina.Value;
+            s[8] = ModConfig.MilesSoul.AmbitionPetrify.Value;
+            s[9] = ModConfig.MilesSoul.AmbitionHunger.Value;
+            s[10] = ModConfig.MilesSoul.AmbitionExtraStamina.Value;
+            s[11] = ModConfig.MilesSoul.RuleZeroHealAssistExtraStamina.Value;
+            bool ruleZero = ModConfig.MilesSoul.RuleZeroHealAssist.Value;
+
+            if (_milesCfgString != null && ruleZero == _milesCfgRuleZeroLast)
+            {
+                bool same = true;
+                for (int i = 0; i < s.Length; i++)
+                {
+                    if (s[i] == _milesCfgLast[i]) continue;
+                    same = false;
+                    break;
+                }
+                if (same) return _milesCfgString;
+            }
+
+            System.Array.Copy(s, _milesCfgLast, s.Length);
+            _milesCfgRuleZeroLast = ruleZero;
+
+            string F(float value) => value.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+            _milesCfgString = string.Join("|", new[]
+            {
+                F(s[0]), F(s[1]), F(s[2]), F(s[3]), F(s[4]), F(s[5]),
+                F(s[6]), F(s[7]), F(s[8]), F(s[9]), F(s[10]),
+                ruleZero ? "1" : "0",
+                F(s[11]),
+            });
+            return _milesCfgString;
+        }
+
+        private void OnMilesClientEvent(ExitGames.Client.Photon.EventData photonEvent)
+        {
+            try
+            {
+                if (!(photonEvent.CustomData is object[] arr) || arr.Length < 3) return;
+                if (!(arr[0] is string id) || id != ClassDisplayNet.ModId) return;
+                int actor = photonEvent.Sender;
+                var master = PhotonNetwork.MasterClient;
+                if (master == null || actor == master.ActorNumber) return;
+
+                byte kind = System.Convert.ToByte(arr[1]);
+                string data = arr[2] as string;
+                if (kind == ClassDisplayNet.KindMilesClientHello)
+                {
+                    bool firstHello = !_milesLocalClients.ContainsKey(actor);
+                    _milesLocalClients[actor] = Time.time;
+                    if (firstHello) _milesLocalReady.Remove(actor);
+                    PublishMilesGameplayState(actor);
+                    return;
+                }
+
+                if (kind == ClassDisplayNet.KindMilesClientReady)
+                {
+                    // 只有客机确认收到残魂职业与配置后才停用主机兜底；Hello 本身不代表可以安全切换。
+                    if (!IsMilesLocalActor(actor) || data != "26") return;
+                    var readyCharacter = FindCharacterByActor(actor);
+                    if (readyCharacter == null || _ledger.GetClass(readyCharacter) != ClassType.MilesSoul)
+                    {
+                        _milesLocalReady.Remove(actor);
+                        return;
+                    }
+                    _milesLocalReady[actor] = Time.time;
+                    return;
+                }
+
+                if (kind != ClassDisplayNet.KindMilesUsageReport || !IsMilesLocalReady(actor)) return;
+                if (!RollOfTheScout.Shared.MilesSoulLocal.TryParseUsageReport(
+                        data, out string gemName, out int usageValue)) return;
+                _milesLocalClients[actor] = Time.time;
+                _milesLocalReady[actor] = Time.time;
+
+                var miles = FindCharacterByActor(actor);
+                if (miles == null || _ledger.GetClass(miles) != ClassType.MilesSoul) return;
+                var usage = (MilesGemUsage)usageValue;
+                bool ruleZeroAssist = gemName == ItemNames.AmuletHealing
+                    && usage == MilesGemUsage.FeedDowned
+                    && ModConfig.MilesSoul.RuleZeroHealAssist.Value;
+                if (!ruleZeroAssist) CountMilesGemUse(miles);
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogWarning($"[RollOfTheScout] 处理残魂本机事件时异常：{e.Message}");
+            }
+        }
+
         /// <summary>
         /// 【封印之力 / 零号守则】使用童军宝石道具的结算。
         /// 调用来源：① <c>Item.Consume</c> / <c>GlobalEvents.OnItemConsumed</c>（见 <see cref="OnMilesGemConsumed"/>）；
@@ -8526,6 +8752,9 @@ namespace RollOfTheScout
             if (_ledger.GetClass(character) != ClassType.MilesSoul) return;
             if (!MilesGemItems.Contains(gemName)) return;
 
+            // 新版主 / 附属模组客机已在属主端完成同一套结算；主机只接收计数报告，不能重复施加。
+            if (IsMilesHandledLocally(character)) return;
+
             // 童军的盛情：只有「成功复制了物品」（`RPCA_Shoot` 的 success==true）才算一次「使用」——
             // 空放不结算效果、不计入【众魂阻挠】，也**不占用去重窗口**（否则会挡掉紧随其后的克隆成功通道）。
             if (gemName == ItemNames.AmuletClone && !cloneSuccess) return;
@@ -8537,6 +8766,21 @@ namespace RollOfTheScout
             {
                 if (_milesUseGuardUntil.TryGetValue(key, out float guardUntil) && Time.time < guardUntil) return;
                 _milesUseGuardUntil[key] = Time.time + MilesUseDedupWindow;
+            }
+
+            // 无模组客机统一冷却：可靠 RPC、喂食与石化启发式都必须经过这里，冷却内不触发四种宝石效果。
+            var view = character.photonView;
+            if (view != null && !view.IsMine && !string.IsNullOrEmpty(uid))
+            {
+                float cooldown = Mathf.Max(0f, ModConfig.MilesSoul.RemoteGemUseCooldown.Value);
+                string cooldownKey = uid + "|" + gemName;
+                if (cooldown > 0f
+                    && _milesRemoteUseCooldownUntil.TryGetValue(cooldownKey, out float cooldownUntil)
+                    && Time.time < cooldownUntil)
+                {
+                    return;
+                }
+                if (cooldown > 0f) _milesRemoteUseCooldownUntil[cooldownKey] = Time.time + cooldown;
             }
 
             // 「使用前」石化基线：调用方未给出时取动作 Prefix 记录的快照（去重通过后才取，避免被去重的那次白耗快照）。
@@ -8560,14 +8804,12 @@ namespace RollOfTheScout
                 else if (usage == MilesGemUsage.FeedDowned && ModConfig.MilesSoul.RuleZeroHealAssist.Value)
                 {
                     int baseline = preUsePetrify >= 0 ? preUsePetrify : HostApi.GetPetrify(character);
-                    RegisterMilesZeroPetrifyCancel(character, 0f, baseline);
-
                     float assistStamina = ModConfig.MilesSoul.RuleZeroHealAssistExtraStamina.Value;
-                    if (assistStamina != 0f) HostApi.BoostExtraStamina(character, assistStamina);
+                    RegisterMilesZeroPetrifyCancel(character, 0f, baseline, assistStamina);
 
                     Plugin.Log.LogInfo(
                         $"[RollOfTheScout] 童军的毅力：{Nick(character)} 喂给昏迷队友 → 零号守则：石化抵消至 {Mathf.Clamp(baseline, 0, 100)}"
-                        + $"（等量清除本次追加、不计入众魂阻挠；使用前基准 {baseline}）、额外体力+{assistStamina * 100f:0.#}。");
+                        + $"（等量清除本次追加、不计入众魂阻挠；使用前基准 {baseline}），抵消后额外体力+{assistStamina * 100f:0.#}。");
                 }
                 // 情形①：对自己使用 —— 【封印之力】子效果：−石化、−饥饿。
                 else
@@ -8702,13 +8944,17 @@ namespace RollOfTheScout
         /// （本地动作 Postfix / 客机启发式轮询都晚于代价落地），于是目标 = 已增加后的值 − 职业减量，
         /// 宝石追加的石化完全没被清除（实测日志 `石化 100 → 抵消为 90`、`30 → 20`）。现改用使用前基准。
         /// </summary>
-        private void RegisterMilesZeroPetrifyCancel(Character character, float classPetrifyReduction, int baselinePetrify)
+        private void RegisterMilesZeroPetrifyCancel(Character character, float classPetrifyReduction,
+            int baselinePetrify, float assistStamina)
         {
             string id = _ledger.IdOf(character);
             if (string.IsNullOrEmpty(id)) return;
             int reduction = Mathf.RoundToInt(Mathf.Max(0f, classPetrifyReduction) * 100f);
             _milesZeroPetrifyTarget[id] = Mathf.Clamp(baselinePetrify - reduction, 0, 100);
             _milesZeroPetrifyUntil[id] = Time.time + 3f;
+            _milesZeroPetrifyFireAt[id] = Time.time + MilesPetrifyReduceDelay;
+            _milesZeroExtraStamina[id] = assistStamina;
+            _milesZeroExtraStaminaApplied.Remove(id);
             _milesZeroPetrifyNextSend.Remove(id);
         }
 
@@ -8883,14 +9129,13 @@ namespace RollOfTheScout
             if (_milesPetrifyTimer < interval) return;
             _milesPetrifyTimer = 0f;
 
-            float cooldown = Mathf.Max(0f, ModConfig.MilesSoul.RemoteGemUseCooldown.Value);
-
             foreach (var c in characters)
             {
                 if (_ledger.GetClass(c) != ClassType.MilesSoul) continue;
                 var view = c.photonView;
                 if (view == null) continue;
                 if (view.IsMine) continue;   // 主机本人由本地动作补丁负责
+                if (IsMilesHandledLocally(c)) continue;   // 新版主 / 附属模组客机由属主端直接结算
                 if (c.data == null) continue;
 
                 string id = _ledger.IdOf(c);
@@ -8916,13 +9161,6 @@ namespace RollOfTheScout
                 string gem = FindHeldGemName(c);
                 if (gem == null) continue;             // 未手执童军宝石 → 不是「使用宝石」造成的
 
-                // 冷却按「玩家 + 宝石」分别计时：避免用了毅力后，接着用进取 / 野心被一并吞掉。
-                string coolKey = id + "|" + gem;
-                if (cooldown > 0f
-                    && _milesRemoteUseCooldownUntil.TryGetValue(coolKey, out float until) && Time.time < until)
-                    continue;
-
-                if (cooldown > 0f) _milesRemoteUseCooldownUntil[coolKey] = Time.time + cooldown;
                 Plugin.Log.LogInfo(
                     $"[RollOfTheScout] 封印之力：{Nick(c)} 手执 {gem} 且石化 +{delta:0.#}（>{threshold:0.#}），判定为使用该宝石。");
                 // prev 即「使用前」的石化值（本次增量就发生在 prev → cur 之间），传给结算作为零号守则的抵消基准。
@@ -8973,12 +9211,37 @@ namespace RollOfTheScout
                     continue;
                 }
 
-                // 允许窗口内（自身职业效果 / 法师·净化）：记录值**双向跟随**实际值。
-                // 这一步必须早于「上升」分支 —— 否则自身效果刚下调记录值、而客户端同步尚未到达时，
-                // 会被「实际值仍偏高 → 刷新记录值」误判为上升，从而把这次降低撤销掉（竞态）。
+                // 自身职业减量尚未确认：旧高值不能覆盖目标；若观察到真实新增诅咒，则把目标等量上移。
+                // 直到同步值到达预期后才恢复正常保护，避免首拾 -5 被旧副本撤销或只落下部分减量。
+                if (_milesCurseReducePending.Contains(id))
+                {
+                    _milesCurseReduceLastObserved.TryGetValue(id, out float lastObserved);
+                    if (cur > lastObserved + 0.0125f)
+                    {
+                        _milesCurseRecord[id] = Mathf.Clamp01(rec + (cur - lastObserved));
+                        rec = _milesCurseRecord[id];
+                    }
+
+                    if (cur <= rec + 0.0125f)
+                    {
+                        _milesCurseRecord[id] = cur;
+                        _milesCurseReducePending.Remove(id);
+                        _milesCurseReduceLastObserved.Remove(id);
+                    }
+                    else
+                    {
+                        _milesCurseReduceLastObserved[id] = cur;
+                    }
+                    ResetMilesCurseFixState(id);
+                    continue;
+                }
+
+                // 允许窗口内（自身职业效果 / 法师·净化）：实际值到达目标或更低时，向下刷新记录；
+                // 但主机尚未同步的旧高值绝不能反向抬升目标，否则首拾 -5 的基准会被旧副本覆盖。
+                // 此分支必须早于「上升」分支，避免自身职业效果刚下调记录值就被误判为外部增加。
                 if (_milesCurseAllowUntil.TryGetValue(id, out float until) && Time.time < until)
                 {
-                    _milesCurseRecord[id] = cur;
+                    if (cur <= rec + 0.0125f) _milesCurseRecord[id] = cur;
                     ResetMilesCurseFixState(id);
                     continue;
                 }
@@ -9087,6 +9350,9 @@ namespace RollOfTheScout
                 if (!_milesZeroPetrifyTarget.TryGetValue(id, out int target)) continue;
 
                 float until = _milesZeroPetrifyUntil.TryGetValue(id, out float u) ? u : 0f;
+                float fireAt = _milesZeroPetrifyFireAt.TryGetValue(id, out float f) ? f : 0f;
+                if (Time.time < fireAt) continue;
+
                 int cur = HostApi.GetPetrify(c);
                 if (cur > target && Time.time >= (_milesZeroPetrifyNextSend.TryGetValue(id, out float next) ? next : 0f))
                 {
@@ -9094,7 +9360,17 @@ namespace RollOfTheScout
                     HostApi.SetPetrify(c, target);
                     Plugin.Log.LogInfo($"[RollOfTheScout] 零号守则：{Nick(c)} 毅力助人，石化 {cur} → 抵消为 {target}。");
                 }
-                if (Time.time >= until) (done ??= new List<string>()).Add(id);
+
+                // 只有确认石化已不高于使用前基准后才发放，避免后续石化写回按新上限把额外体力顶掉。
+                if (cur <= target && !_milesZeroExtraStaminaApplied.Contains(id))
+                {
+                    float stamina = _milesZeroExtraStamina.TryGetValue(id, out float value) ? value : 0f;
+                    if (stamina != 0f) HostApi.BoostExtraStamina(c, stamina);
+                    _milesZeroExtraStaminaApplied.Add(id);
+                    Plugin.Log.LogInfo($"[RollOfTheScout] 零号守则：{Nick(c)} 石化抵消已完成，额外体力+{stamina * 100f:0.#}。");
+                }
+                if (Time.time >= until && _milesZeroExtraStaminaApplied.Contains(id))
+                    (done ??= new List<string>()).Add(id);
             }
             if (done != null)
             {
@@ -9103,6 +9379,9 @@ namespace RollOfTheScout
                     _milesZeroPetrifyTarget.Remove(id);
                     _milesZeroPetrifyUntil.Remove(id);
                     _milesZeroPetrifyNextSend.Remove(id);
+                    _milesZeroPetrifyFireAt.Remove(id);
+                    _milesZeroExtraStamina.Remove(id);
+                    _milesZeroExtraStaminaApplied.Remove(id);
                 }
             }
         }
@@ -10345,7 +10624,11 @@ namespace RollOfTheScout
         void Photon.Realtime.IOnEventCallback.OnEvent(ExitGames.Client.Photon.EventData photonEvent)
         {
             if (photonEvent == null || photonEvent.Code != ClassDisplayNet.EventCode) return;
-            if (PhotonNetwork.IsMasterClient) return;   // 主机一律用本地账本，不处理广播
+            if (PhotonNetwork.IsMasterClient)
+            {
+                OnMilesClientEvent(photonEvent);
+                return;
+            }
 
             // 只接受来自主机（MasterClient）的事件，避免误信其它客户端。
             var master = PhotonNetwork.MasterClient;
@@ -10701,26 +10984,43 @@ namespace RollOfTheScout
                 _toastStyle = new GUIStyle(GUI.skin.label)
                 {
                     fontSize = Mathf.Max(16, Mathf.RoundToInt(Screen.height / 48f)),
-                    fontStyle = FontStyle.Bold,
+                    fontStyle = FontStyle.Normal,
                     alignment = TextAnchor.MiddleLeft,
+                    wordWrap = true,
                 };
                 _toastStyle.normal.textColor = Color.white;
             }
 
             float w = Screen.width * 0.45f;
+            float innerW = w - 20f;
             float lineH = _toastStyle.fontSize * 1.6f;
-            float h = lineH * _toasts.Count + 12f;
+
+            // 一条提示可能自带换行（中英双语各一行），也可能因屏幕较窄而折行：
+            // 因此必须按**实际排版高度**逐条累计，不能按「条数 × 单行高」计算，
+            // 否则窗口只有一半高度，两行文字会被垂直居中裁掉上下各一半。
+            _toastHeights.Clear();
+            float contentH = 0f;
+            for (int i = 0; i < _toasts.Count; i++)
+            {
+                _toastMeasure.text = _toasts[i];
+                float h = Mathf.Max(lineH, _toastStyle.CalcHeight(_toastMeasure, innerW) + 2f);
+                _toastHeights.Add(h);
+                contentH += h;
+            }
+
             // 介绍板块显示时临时下移到它下方（避免与左上角提示重叠）
             float top = _imguiIntroBottom > 0f ? _imguiIntroBottom + 8f : 12f;
-            var box = new Rect(12f, top, w, h);
+            var box = new Rect(12f, top, w, contentH + 12f);
             GUI.color = new Color(0f, 0f, 0f, 0.6f);
             GUI.DrawTexture(box, Texture2D.whiteTexture);
             GUI.color = Color.white;
 
+            float y = box.y + 6f;
             for (int i = 0; i < _toasts.Count; i++)
             {
-                var line = new Rect(box.x + 10f, box.y + 6f + lineH * i, box.width - 20f, lineH);
-                GUI.Label(line, _toasts[i], _toastStyle);
+                float h = _toastHeights[i];
+                GUI.Label(new Rect(box.x + 10f, y, innerW, h), _toasts[i], _toastStyle);
+                y += h;
             }
         }
 
@@ -11314,7 +11614,7 @@ namespace RollOfTheScout
 
         /// <summary>
         /// 【我去，老美的NASA这么厉害】的「额外加成」：对比上一轮快照，只要该太空人的
-        /// 蛛网 / 捕蝇草 / 诅咒**有增加**，就额外追加同种状态「NASA-额外增加」（默认 2.5 点）。
+        /// 蛛网 / 捕蝇草**有增加**，就额外追加同种状态「NASA-额外增加」（默认 2.5 点）；诅咒不触发。
         ///
         /// 实现与 M·享受 / 圣人·跌落神坛 同法（硬约束 #5：被动倍率只能靠「主机轮询同步值 + 施加补偿增量」）：
         /// 追加后把快照**后移**为「本轮值 + 追加值」（预期值），避免下一轮把自身追加的值误判成新的「获得」而无限自增。
@@ -11541,7 +11841,7 @@ namespace RollOfTheScout
 
         /// <summary>
         /// 【太空食品安全】：太空人只能食用「包装食物」与「烤熟的食物」，
-        /// 每次食用不符合条件的食物 +「太空食品安全-中毒」（默认 10 点）。
+        /// 每次食用不符合条件的食物 +「太空食品安全-中毒」（默认 20 点）。
         /// 判定与原版标签一致（PackagedFood / CookedAmount ≥ 1）；
         /// 黑名单「太空食品安全-黑名单」（默认：诡异菇 Mushroom Glow、万灵药 Cure-All）内的物品豁免 ——
         /// 前者是通用·转职触发物品（避免转职的同一口食物被扣中毒），后者为药剂。

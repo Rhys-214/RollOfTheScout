@@ -1,0 +1,8 @@
+F:\PEAKmodding\Mod\GitHub\Mod\RollOfTheScout\bin\Release\com.peakmodding.RollOfTheScout.deps.json
+F:\PEAKmodding\Mod\GitHub\Mod\RollOfTheScout\bin\Release\com.peakmodding.RollOfTheScout.dll
+F:\PEAKmodding\Mod\GitHub\Mod\RollOfTheScout\obj\Release\RollOfTheScout.csproj.AssemblyReference.cache
+F:\PEAKmodding\Mod\GitHub\Mod\RollOfTheScout\obj\Release\RollOfTheScout.GeneratedMSBuildEditorConfig.editorconfig
+F:\PEAKmodding\Mod\GitHub\Mod\RollOfTheScout\obj\Release\RollOfTheScout.AssemblyInfoInputs.cache
+F:\PEAKmodding\Mod\GitHub\Mod\RollOfTheScout\obj\Release\RollOfTheScout.AssemblyInfo.cs
+F:\PEAKmodding\Mod\GitHub\Mod\RollOfTheScout\obj\Release\RollOfTheScout.csproj.CoreCompileInputs.cache
+F:\PEAKmodding\Mod\GitHub\Mod\RollOfTheScout\obj\Release\com.peakmodding.RollOfTheScout.dll

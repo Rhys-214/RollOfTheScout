@@ -10,8 +10,8 @@ using UnityEngine;
 namespace RollOfTheScout
 {
     /// <summary>
-    /// 方案 B「仅主机安装」职业模组入口。
-    /// 只有房主（MasterClient）会加载并执行任何逻辑；其他玩家零安装。
+    /// 方案 B「仅主机安装即可游玩」职业模组入口。
+    /// 主机执行完整职业逻辑；装有主模组的客机另通过共用组件处理本机残魂宝石结算。
     /// </summary>
     [BepInPlugin(Guid, "RollOfTheScout", "1.0.0")]
     public class Plugin : BaseUnityPlugin
@@ -81,8 +81,12 @@ namespace RollOfTheScout
             // 配置项为固定中英双语（见 ConfigLocalization）；绑定到插件自身的 Config，ModConfig 才能读到。
             ModConfig.Initialize(Config);
 
-            // 驱动器：所有职业逻辑都跑在它里面，并且只在主机上生效
+            // 驱动器：主机执行完整职业逻辑；客机模式另由共用组件处理本机残魂宝石结算。
             gameObject.AddComponent<HostClassManager>();
+            var milesLocal = gameObject.AddComponent<RollOfTheScout.Shared.MilesSoulLocal>();
+            milesLocal.Configure(
+                msg => Log.LogInfo($"[RollOfTheScout] {msg}"),
+                msg => Log.LogWarning($"[RollOfTheScout] {msg}"));
 
             _harmony = new Harmony(Guid);
             HarmonyInstance = _harmony;
@@ -309,6 +313,9 @@ namespace RollOfTheScout
             var cloneShoot = ResolveMethod(typeof(Peak.Action_CloneSelectedItem), "RPCA_Shoot", typeof(Vector3));
             TryPatch("Action_CloneSelectedItem.RPCA_Shoot (迈尔斯残魂·童军的盛情)", cloneShoot,
                 postfix: AccessTools.Method(typeof(MilesClonePatch), nameof(MilesClonePatch.Postfix)));
+            TryPatch("Action_CloneSelectedItem.RPCA_Shoot (残魂本机·童军的盛情)", cloneShoot,
+                postfix: AccessTools.Method(typeof(RollOfTheScout.Shared.MilesLocalClonePatch),
+                    nameof(RollOfTheScout.Shared.MilesLocalClonePatch.Postfix)));
 
             // 领队·迈尔斯残魂·童军宝石「直接使用」感知（毅力 / 进取 / 野心）。
             // 这些宝石在原版是「口袋行为」，按下使用键时由使用者客户端本地执行对应动作，
@@ -332,6 +339,23 @@ namespace RollOfTheScout
                 prefix: AccessTools.Method(typeof(MilesGemUsePatch), nameof(MilesGemUsePatch.SuperJumpAmuletPrefix)),
                 postfix: AccessTools.Method(typeof(MilesGemUsePatch), nameof(MilesGemUsePatch.SuperJumpAmuletPostfix)));
 
+            // 装有主模组的客机：与附属模组共用本机残魂动作检测，绕过主机旧副本的启发式写回。
+            TryPatch("AmuletBase.ToggleGem (残魂本机·宝石使用)", toggleGem,
+                prefix: AccessTools.Method(typeof(RollOfTheScout.Shared.MilesLocalGemUsePatch),
+                    nameof(RollOfTheScout.Shared.MilesLocalGemUsePatch.ToggleGemPrefix)),
+                postfix: AccessTools.Method(typeof(RollOfTheScout.Shared.MilesLocalGemUsePatch),
+                    nameof(RollOfTheScout.Shared.MilesLocalGemUsePatch.ToggleGemPostfix)));
+            TryPatch("Action_HealingGem.RunAction (残魂本机·童军的毅力)", healingGem,
+                prefix: AccessTools.Method(typeof(RollOfTheScout.Shared.MilesLocalGemUsePatch),
+                    nameof(RollOfTheScout.Shared.MilesLocalGemUsePatch.HealingGemPrefix)),
+                postfix: AccessTools.Method(typeof(RollOfTheScout.Shared.MilesLocalGemUsePatch),
+                    nameof(RollOfTheScout.Shared.MilesLocalGemUsePatch.HealingGemPostfix)));
+            TryPatch("Action_SuperJumpAmulet.RunAction (残魂本机·童军的进取)", superJumpAmulet,
+                prefix: AccessTools.Method(typeof(RollOfTheScout.Shared.MilesLocalGemUsePatch),
+                    nameof(RollOfTheScout.Shared.MilesLocalGemUsePatch.SuperJumpPrefix)),
+                postfix: AccessTools.Method(typeof(RollOfTheScout.Shared.MilesLocalGemUsePatch),
+                    nameof(RollOfTheScout.Shared.MilesLocalGemUsePatch.SuperJumpPostfix)));
+
             // 领队·迈尔斯残魂·童军宝石「喂食」感知（毅力救人等）。
             // 喂食走 Item.FinishCastSecondary → FeedItem + FeederAction，既不过 RunAction/ToggleGem，
             // 也被 Item.Consume 的「消费者」通道排除（被喂的是昏迷队友）—— 此前主机本人喂宝石完全没有感知。
@@ -340,6 +364,11 @@ namespace RollOfTheScout
             TryPatch("Item.FinishCastSecondary (迈尔斯残魂·宝石喂食)", finishCast,
                 prefix: AccessTools.Method(typeof(MilesFeedGemPatch), nameof(MilesFeedGemPatch.Prefix)),
                 postfix: AccessTools.Method(typeof(MilesFeedGemPatch), nameof(MilesFeedGemPatch.Postfix)));
+            TryPatch("Item.FinishCastSecondary (残魂本机·宝石喂食)", finishCast,
+                prefix: AccessTools.Method(typeof(RollOfTheScout.Shared.MilesLocalFeedPatch),
+                    nameof(RollOfTheScout.Shared.MilesLocalFeedPatch.Prefix)),
+                postfix: AccessTools.Method(typeof(RollOfTheScout.Shared.MilesLocalFeedPatch),
+                    nameof(RollOfTheScout.Shared.MilesLocalFeedPatch.Postfix)));
 
             // 领队·迈尔斯残魂·宝石「喂食开始」感知（区分「喂给昏迷者 / 喂给未昏迷者」的必需信息）。
             // 原版 Item.StartUseSecondary 在开始喂食时以 RpcTarget.All 广播
