@@ -134,6 +134,14 @@ namespace RollOfTheScout
         // 精品大果（榔王）：荔莓（默认取王莓系列：绿王莓 / 紫王莓）
         public const string KingberryGreen = "Kingberry Green";              // 绿王莓（青荔莓）
         public const string KingberryPurple = "Kingberry Purple";            // 紫王莓（紫荔莓）
+
+        // 石躯 / 石化（石像鬼）：石头 / 童军雕像
+        public const string Stone = "Stone";                                 // 石头
+        public const string ScoutEffigy = "ScoutEffigy";                     // 童军雕像
+
+        // 发糖 / 蛀牙（捣蛋鬼）：糖果池
+        public const string TrailMix = "TrailMix";                           // 混合坚果
+        public const string Marshmallow = "Marshmallow";                     // 棉花糖
     }
 
     /// <summary>带权重的物品候选。</summary>

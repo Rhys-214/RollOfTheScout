@@ -4,6 +4,7 @@ using RollOfTheScout.Patches;
 using Photon.Pun;
 using UnityEngine;
 using Zorro.Core;
+using Zorro.Core.Serizalization;
 
 namespace RollOfTheScout
 {
@@ -355,6 +356,155 @@ namespace RollOfTheScout
         {
             if (target == null || target.player == null) return false;
             return HasEmptyItemSlot(target.player);
+        }
+
+        /// <summary>
+        /// 该角色此刻能否真正接住一次**世界拾取**（与原版 <c>Player.AddItem</c> 的落点规则一致）：
+        /// 3 个物品栏有空位，或物品栏全满但主手临时槽（下标 250）为空且正在攀爬之外。
+        /// 用于「拾取类」效果：物品栏全满时拾取仍会进入主手，因此不能只检查物品栏空位。
+        /// </summary>
+        public static bool CanAcceptPickup(Character target)
+        {
+            if (target == null || target.player == null || target.data == null) return false;
+            if (HasEmptyItemSlot(target.player)) return true;
+            if (target.data.isClimbingAnything) return false;
+            var temp = target.player.tempFullSlot;
+            return temp != null && temp.IsEmpty();
+        }
+
+        /// <summary>
+        /// 把一件物品以「原版拾取」的方式发给目标：优先空物品栏，物品栏全满时落入主手临时槽，
+        /// 并在成功后复刻原版 <c>RequestPickup</c> 的最后一步
+        /// （<c>refs.view.RPC("OnPickupAccepted", owner, slot.itemSlotID)</c>）让属主**立即把物品拿在手上**。
+        ///
+        /// 与 <see cref="GiveItemForceHold"/> 的区别：后者只在落入主手临时槽时才通知握持；
+        /// 本方法无论落入哪个物品栏槽位都会通知，因此行为与玩家亲自拾取完全一致，
+        /// 用于「拾取时物品被替换成另一件物品」的效果（炼金术士 · 等价交换 / 石像鬼 · 石化）。
+        /// </summary>
+        public static bool GiveItemAsPickup(Character target, string prefabName, out ItemSlot slot)
+        {
+            slot = null;
+            if (target == null || string.IsNullOrEmpty(prefabName)) return false;
+            if (!PhotonNetwork.IsMasterClient) return false;
+            if (!ItemDatabase.TryGetItem(prefabName, out Item itemPrefab) || itemPrefab == null)
+            {
+                Plugin.Log.LogWarning($"[HostApi] 未找到物品预制体：{prefabName}");
+                return false;
+            }
+            return GiveItemAsPickup(target, itemPrefab, out slot);
+        }
+
+        /// <summary>
+        /// 按「原版拾取」语义移除一件被拾取的物品：
+        /// · 世界 / 手持物品 → <c>PhotonNetwork.Destroy</c>；
+        /// · 背包内的物品（<c>ItemState.InBackpack</c>，含普通背包与滑稽背包）→ 调用原版
+        ///   <c>Item.ClearDataFromBackpack()</c> 清空背包槽位并同步 / 刷新视觉。
+        ///
+        /// 直接在背包物品上 <c>Destroy</c> 只会销毁视觉对象，背包数据仍保留，
+        /// 玩家可以反复从背包取出同一件物品触发拾取效果（炼金术士 / 石像鬼等职业的刷取漏洞）。
+        /// </summary>
+        public static void ConsumePickedItem(Item item)
+        {
+            if (item == null) return;
+
+            if (item.itemState == ItemState.InBackpack)
+            {
+                item.ClearDataFromBackpack();
+                return;
+            }
+
+            PhotonNetwork.Destroy(item.gameObject);
+        }
+
+        /// <summary>
+        /// 把一件普通物品放进目标玩家**已装备的背包**（普通背包 / 滑稽背包均可），
+        /// 用于「物品栏全满时继续收纳」的效果（捣蛋鬼【捣蛋·转移】）。
+        ///
+        /// 实现与原版 <c>Player.AddItem</c> 的背包分支保持一致：
+        /// 先取 <c>backpackSlot.data</c> 里的 <c>BackpackData</c>，找到第一个空槽写入实例数据，
+        /// 再由主机广播 <c>SyncInventoryRPC</c>（与 <c>AddItem</c> 相同的整包同步）。
+        /// </summary>
+        public static bool TryGiveItemToBackpack(Character target, string prefabName)
+        {
+            if (!PhotonNetwork.IsMasterClient) return false;
+            if (target == null || target.player == null) return false;
+            if (!ItemDatabase.TryGetItem(prefabName, out Item prefab) || prefab == null) return false;
+            // 背包类物品本身不塞进背包，避免嵌套
+            if (prefab is Backpack) return false;
+
+            var player = target.player;
+            var backpackSlot = player.backpackSlot;
+            if (backpackSlot == null || backpackSlot.IsEmpty() || backpackSlot.data == null) return false;
+
+            BackpackData data;
+            if (!backpackSlot.data.TryGetDataEntry<BackpackData>(DataEntryKey.BackpackData, out data) || data == null)
+                data = backpackSlot.data.RegisterNewEntry<BackpackData>(DataEntryKey.BackpackData);
+            if (data == null || data.itemSlots == null) return false;
+
+            int slotIndex = -1;
+            for (int i = 0; i < data.itemSlots.Length; i++)
+            {
+                if (data.itemSlots[i] != null && data.itemSlots[i].IsEmpty()) { slotIndex = i; break; }
+            }
+            if (slotIndex < 0) return false;
+
+            var instanceData = new ItemInstanceData(System.Guid.NewGuid());
+            ItemInstanceDataHandler.AddInstanceData(instanceData);
+            data.itemSlots[slotIndex].SetItem(prefab, instanceData);
+
+            // 与 Player.AddItem 相同：把 3 个物品栏 + 背包槽 + 主手临时槽整包同步给其他客户端
+            var sync = IBinarySerializable.ToManagedArray(
+                new InventorySyncData(player.itemSlots, player.backpackSlot, player.tempFullSlot));
+            player.photonView.RPC("SyncInventoryRPC", RpcTarget.Others, sync, false);
+
+            // 主机本地副本的背包外观刷新（远端由各自的 SyncInventoryRPC / 打开背包时刷新）
+            try
+            {
+                var reference = BackpackReference.GetFromEquippedBackpack(target);
+                var visuals = reference.GetVisuals();
+                if (visuals != null) visuals.RefreshVisuals();
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogWarning($"[HostApi] 背包外观刷新失败（不影响物品发放）：{e.Message}");
+            }
+            return true;
+        }
+
+        /// <summary>同上，但直接使用已解析的物品预制体。</summary>
+        public static bool GiveItemAsPickup(Character target, Item itemPrefab, out ItemSlot slot)
+        {
+            slot = null;
+            if (target == null || itemPrefab == null) return false;
+            if (!PhotonNetwork.IsMasterClient) return false;
+
+            var inventory = target.player;
+            if (inventory == null) return false;
+
+            // 背包类物品走背包槽，不属于「拾取到物品栏 / 主手」，保持原版拒绝语义
+            if (itemPrefab is Backpack) return false;
+
+            AssassinPickupPatch.PushSuppress();
+            bool ok;
+            try
+            {
+                ok = inventory.AddItem(itemPrefab.itemID, null, out slot);
+            }
+            finally
+            {
+                AssassinPickupPatch.PopSuppress();
+            }
+            if (!ok || slot == null) return false;
+
+            // 复刻原版 RequestPickup：背包槽（下标 3）不握持，其余槽位（含主手 250）交给属主 EquipSlot。
+            if (slot.itemSlotID != 3)
+            {
+                var view = target.refs != null ? target.refs.view : null;
+                var owner = inventory.photonView != null ? inventory.photonView.Owner : null;
+                if (view != null && owner != null)
+                    view.RPC("OnPickupAccepted", owner, slot.itemSlotID);
+            }
+            return true;
         }
 
         /// <summary>

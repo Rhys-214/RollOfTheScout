@@ -48,6 +48,22 @@ namespace RollOfTheScout
 
         /// <summary>「不行不行」表情的原版动画名（主机日志实测确认，见 §表情名观测）。</summary>
         private const string EmoteNoNo = "A_Scout_Emote_Nono";
+        private const string EmoteShrug = "A_Scout_Emote_Shrug";
+
+        /// <summary>万圣节彩蛋：强制使用的南瓜头帽子编号。</summary>
+        private const int HalloweenPumpkinHatId = 27;
+
+        /// <summary>万圣节南瓜头配置项的切换内置冷却（秒）。</summary>
+        private const float HalloweenHatToggleCooldownSeconds = 60f;
+
+        /// <summary>
+        /// 首次见到某玩家后先观察一段时间再改写：客机角色实例化后会异步从 Steam 同步真实装扮，
+        /// 若立刻记录原帽，可能把「尚未同步的默认值（0）」当成原帽。默认 3 秒足够覆盖该竞态。
+        /// </summary>
+        private const float HalloweenHatRecordGraceSeconds = 3f;
+
+        /// <summary>「耸肩」切换原帽 / 南瓜头的内置冷却（秒）；冷却期间直接跳过检测与判断。</summary>
+        private const float HalloweenHatShrugCooldownSeconds = 30f;
 
         /// <summary>
         /// 「职业效果强制播放表情」的**精确识别**：强制播放期间记录「目标角色 ViewID + 表情名」，
@@ -492,6 +508,17 @@ namespace RollOfTheScout
             public CharacterCustomizationData Applied;
         }
 
+        /// <summary>万圣节·南瓜头：某位玩家被强制换成南瓜头之前的原始帽子编号。</summary>
+        private sealed class HalloweenHatSnapshot
+        {
+            public Photon.Realtime.Player Player;
+            public int Hat = -1;          // -1 = 尚未可靠记录到原帽
+
+            /// <summary>首次见到该玩家的时刻（用于原帽观察窗口）。</summary>
+            public float FirstSeenAt;
+            public bool Frozen;           // 观察窗口结束后冻结原帽，开始强制改写
+        }
+
         /// <summary>「执旗」待施加队列（插旗后延迟触发，见 TickFlagBearerEffects）。</summary>
         private readonly List<FlagBearerPending> _flagPending = new List<FlagBearerPending>();
 
@@ -543,6 +570,7 @@ namespace RollOfTheScout
         /// <summary>童军·【集体】（第 85 批三档）：童军/领袖档的损伤 / 饥饿计时器（间隔不同，故分开）。</summary>
         private float _scoutAllyInjuryTimer;
         private float _scoutAllyHungerTimer;
+        private float _scoutAllyStaminaTimer;
         private float _dancerDanceTimer;
         // 「临触发 10 秒前」的定向预警是否已发（每轮重置）；只有舞王 / 待皓本人能看到。
         private bool _dancerFrenzyWarned;
@@ -1070,6 +1098,201 @@ namespace RollOfTheScout
         private readonly Dictionary<string, ProgrammerCopy> _programmerCopies
             = new Dictionary<string, ProgrammerCopy>();
 
+        // ===============================================================
+        // 混乱末影人（ChaosEnderman）：【混乱传送】/【混乱】/【末影】
+        // ===============================================================
+
+        /// <summary>混乱末影人每名玩家的周期检测状态（按稳定标识索引）。</summary>
+        private sealed class ChaosEndermanState
+        {
+            /// <summary>下一次【混乱传送】检测时刻（<c>Time.time</c>）。</summary>
+            public float NextTeleportCheckAt;
+            /// <summary>下一次「轮换检测状态」时刻（<c>Time.time</c>）。</summary>
+            public float NextRotateAt;
+            /// <summary>当前检测的状态在状态池中的下标（-1 = 尚未选定；每次轮换随机抽取，且尽量不重复上一种）。</summary>
+            public int StatusIndex;
+            /// <summary>
+            /// 上一次检测时记录的**全部状态值**（按状态类型索引）。
+            /// 每次检测都会刷新整张表，因此轮换到另一种状态时，仍能拿到它 30 秒前的值做比较。
+            /// 死亡期间清空；复活后的第一次检测按「没有上次记录」处理。
+            /// </summary>
+            public readonly Dictionary<CharacterAfflictions.STATUSTYPE, float> Baseline
+                = new Dictionary<CharacterAfflictions.STATUSTYPE, float>();
+            /// <summary>下一次【末影】水体 / 曲迁菇检测时刻（<c>Time.time</c>）。</summary>
+            public float NextWaterCheckAt;
+        }
+
+        private readonly Dictionary<string, ChaosEndermanState> _chaosStates
+            = new Dictionary<string, ChaosEndermanState>();
+
+        /// <summary>【末影】两条食用通道之间的去重窗口（秒）。</summary>
+        private const float ChaosEatDedupWindow = 0.5f;
+
+        /// <summary>【末影】食用去重：玩家稳定标识 → 可再次处理的最早时刻。</summary>
+        private readonly Dictionary<string, float> _chaosEatGuardUntil = new Dictionary<string, float>();
+
+        /// <summary>【混乱传送】状态池配置原文 / 解析后的状态列表。</summary>
+        private string _chaosStatusPoolRaw;
+        private readonly List<CharacterAfflictions.STATUSTYPE> _chaosStatusPool
+            = new List<CharacterAfflictions.STATUSTYPE>();
+
+        /// <summary>已经提示过「状态池存在无法识别的名字」的配置原文（避免每次轮换都刷日志）。</summary>
+        private string _chaosStatusPoolWarnedRaw;
+
+        /// <summary>【混乱】拾取黑名单解析缓存。</summary>
+        private string _chaosPickupBlacklistRaw;
+        private readonly HashSet<string> _chaosPickupBlacklist = new HashSet<string>();
+
+        /// <summary>【末影】惩罚饮品解析缓存。</summary>
+        private string _chaosDrinksRaw;
+        private readonly HashSet<string> _chaosDrinks = new HashSet<string>();
+
+        /// <summary>水体判定用的 <see cref="WaterZone"/> 缓存（每 5 秒刷新一次，避免每次检测都全场景查找）。</summary>
+        private readonly List<WaterZone> _chaosWaterZones = new List<WaterZone>();
+        private float _chaosWaterZoneRefreshAt;
+
+        /// <summary>【末影】「直接丢弃曲迁菇」时需要延迟到下一帧销毁的世界物品（避免在 DropItemRpc 中途销毁导致后续 RPC 失效）。</summary>
+        private readonly List<PhotonView> _chaosPendingDropClears = new List<PhotonView>();
+
+        /// <summary>原版把 &gt; 0.1 的按压视为「蓄力扔出」；这里沿用同一阈值区分「直接丢弃」与「蓄力扔出」。</summary>
+        private const float ChaosChargedThrowThreshold = 0.1f;
+
+        // ===============================================================
+        // 石像鬼（Gargoyle）：【石躯】/【石化】/【破壳】/【畏光】/【守护】
+        // ===============================================================
+
+        /// <summary>石像鬼每名玩家的位置采样状态（按稳定标识索引）。</summary>
+        private sealed class GargoyleState
+        {
+            /// <summary>上一次位置检测时的角色中心坐标。</summary>
+            public Vector3 LastCenter;
+            /// <summary>是否已有可比较的上一次坐标。</summary>
+            public bool HasLastCenter;
+            /// <summary>下一次允许检测【破壳】的时刻（<c>Time.time</c>；冷却期间跳过检测）。</summary>
+            public float NextShellCheckAt;
+        }
+
+        private readonly Dictionary<string, GargoyleState> _gargoyleStates
+            = new Dictionary<string, GargoyleState>();
+
+        // 【石躯】五个独立节奏的计时器（位移 / 状态收益 / 畏光 / 守护 / 破壳）
+        private float _gargoyleMoveTimer;
+        private float _gargoyleStatusTimer;
+        private float _gargoyleLightTimer;
+        private float _gargoyleGuardTimer;
+        private float _gargoyleShellTimer;
+
+        /// <summary>【石化】食物豁免物品解析缓存。</summary>
+        private string _gargoyleExemptRaw;
+        private readonly HashSet<string> _gargoyleExempt = new HashSet<string>();
+
+        /// <summary>【石化】石头物品预制体缓存（配置变化时重建）。</summary>
+        private string _gargoyleStoneItemName;
+        private Item _gargoyleStonePrefab;
+
+        // ===============================================================
+        // 炼金术士（Alchemist）：【等价交换】/【能量汲取】/【贤者之石】/【禁忌炼成】
+        // ===============================================================
+
+        /// <summary>炼金术士每名玩家的记账（按稳定标识索引）。</summary>
+        private sealed class AlchemistState
+        {
+            /// <summary>【等价交换】下一次允许触发的时刻（<c>Time.time</c>）。</summary>
+            public float NextEquivAt;
+            /// <summary>【能量汲取】已触发次数（达到阈值后清零并做奖励判定）。</summary>
+            public int DrainCount;
+            /// <summary>【能量汲取】下一次允许触发的时刻（<c>Time.time</c>）。</summary>
+            public float NextDrainAt;
+            /// <summary>【贤者之石】通过【等价交换】累计获得的石头数。</summary>
+            public int StoneCount;
+            /// <summary>【禁忌炼成】上一次检测时正背着的玩家稳定标识（用于识别「刚背起」）。</summary>
+            public string LastCarriedId;
+        }
+
+        private readonly Dictionary<string, AlchemistState> _alchemistStates
+            = new Dictionary<string, AlchemistState>();
+
+        /// <summary>【禁忌炼成】背人检测计时器（默认 0.5 秒一次，避免每帧读全员）。</summary>
+        private float _alchemistCarryTimer;
+
+        /// <summary>【等价交换】工具物品池解析缓存。</summary>
+        private string _alchemistToolRaw;
+        private readonly HashSet<string> _alchemistTools = new HashSet<string>();
+
+        /// <summary>【等价交换】负面状态池解析缓存 / 已提示的无法识别原文。</summary>
+        private string _alchemistStatusPoolRaw;
+        private readonly List<CharacterAfflictions.STATUSTYPE> _alchemistStatusPool
+            = new List<CharacterAfflictions.STATUSTYPE>();
+        private string _alchemistStatusPoolWarnedRaw;
+
+        /// <summary>【能量汲取】豁免物品解析缓存。</summary>
+        private string _alchemistExemptRaw;
+        private readonly HashSet<string> _alchemistExempt = new HashSet<string>();
+
+        /// <summary>【能量汲取】额外可食用物品（如芦荟）解析缓存。</summary>
+        private string _alchemistExtraEdibleRaw;
+        private readonly HashSet<string> _alchemistExtraEdible = new HashSet<string>();
+
+        // ===============================================================
+        // 捣蛋鬼（Trickster）：【发糖】/【捣蛋】/【蛀牙】
+        // ===============================================================
+
+        /// <summary>一次延迟生效的【捣蛋·潘多拉】施加（供 1 秒间隔的连续施加使用）。</summary>
+        private sealed class TricksterPandoraPending
+        {
+            public Character Target;
+            /// <summary>生效时刻（<c>Time.time</c>）。</summary>
+            public float ApplyAt;
+        }
+
+        private readonly List<TricksterPandoraPending> _tricksterPandoraPending
+            = new List<TricksterPandoraPending>();
+
+        /// <summary>一次延迟执行的【捣蛋·转移】（同一帧捣蛋多人时按 1 秒间隔依次发放，避免同步重叠丢物品）。</summary>
+        private sealed class TricksterTransferPending
+        {
+            public Character From;
+            public Character To;
+            /// <summary>生效时刻（<c>Time.time</c>）。</summary>
+            public float ApplyAt;
+        }
+
+        private readonly List<TricksterTransferPending> _tricksterTransferPending
+            = new List<TricksterTransferPending>();
+
+        /// <summary>下一件转移物品最早可以生效的时刻（让多次捣蛋的转移按配置间隔排队）。</summary>
+        private float _tricksterNextTransferAt;
+
+        /// <summary>【发糖】计时器（秒）。</summary>
+        private float _tricksterSugarTimer;
+
+        /// <summary>【发糖】糖果**名称**解析缓存（配置原文 → 名称序；权重每次抽取时现读，改权重立即生效）。</summary>
+        private string _tricksterCandyNamesRaw;
+        private readonly List<string> _tricksterCandyNames = new List<string>();
+        /// <summary>【发糖】抽取用的复用缓冲（每次抽取前清空重填，避免高频分配）。</summary>
+        private readonly List<WeightedItem> _tricksterCandyPool = new List<WeightedItem>();
+
+        /// <summary>拾取变糖黑名单解析缓存。</summary>
+        private string _tricksterPickupBlacklistRaw;
+        private readonly HashSet<string> _tricksterPickupBlacklist = new HashSet<string>();
+
+        /// <summary>【蛀牙】物品解析缓存。</summary>
+        private string _tricksterCavityRaw;
+        private readonly HashSet<string> _tricksterCavity = new HashSet<string>();
+
+        /// <summary>【蛀牙】两条食用通道（Item.Consume 补丁 / GlobalEvents.OnItemConsumed）的去重窗口。</summary>
+        private const float TricksterEatDedupWindow = 0.5f;
+        private readonly Dictionary<string, float> _tricksterEatGuardUntil = new Dictionary<string, float>();
+
+        /// <summary>【捣蛋】拾取拦截结果（供 <see cref="Patches.TricksterPickupPatch"/> 使用）。</summary>
+        public enum TricksterPickupResult
+        {
+            /// <summary>保持原样，交给原版流程入包。</summary>
+            Keep,
+            /// <summary>替换为随机糖果：由补丁销毁世界物品，再用 <c>GiveItemAsPickup</c> 发放糖果。</summary>
+            Replace,
+        }
+
         /// <summary>程序员【开挂·复制】一次「复制到的职业效果」记录（含「下一次检测时清理」所需的信息）。</summary>
         private sealed class ProgrammerCopy
         {
@@ -1149,6 +1372,34 @@ namespace RollOfTheScout
 
         // 待皓·化身「自愈监控」：玩家稳定标识 → 下次允许比对的时刻（1 秒节流）。
         private readonly Dictionary<string, float> _avatarNextCheck = new Dictionary<string, float>();
+
+        // 万圣节·南瓜头：玩家稳定标识（优先 Steam UserId，缺失时退回 "#ActorNumber"）
+        // → 被改写前的原始帽子编号（含当前 Photon 玩家对象，便于广播还原）。
+        // 按稳定标识记录，退出重进（新 ActorNumber）也能沿用同一份原帽记录。
+        private readonly Dictionary<string, HalloweenHatSnapshot> _halloweenHatSnapshots
+            = new Dictionary<string, HalloweenHatSnapshot>();
+
+        // 万圣节·南瓜头：本次开启期间已收到「Happy Halloween!」提示的玩家（避免每秒漂移复核时重复刷屏）。
+        private readonly HashSet<string> _halloweenHatNotified = new HashSet<string>();
+
+        // 万圣节·南瓜头：当前通过「耸肩」切回原帽、暂不套用南瓜头的玩家。
+        private readonly HashSet<string> _halloweenHatShowingOriginal = new HashSet<string>();
+
+        // 万圣节·南瓜头：耸肩切换冷却（稳定标识 → 冷却结束时刻）。
+        private readonly Dictionary<string, float> _halloweenHatShrugCooldownUntil
+            = new Dictionary<string, float>();
+
+        // 万圣节·南瓜头：上一帧读到的配置值，用于区分「冷却期间被丢弃的旧变化」与「冷却结束后的新切换动作」。
+        private bool _halloweenHatLastDesired;
+
+        // 万圣节·南瓜头：本帧仍在房间内的稳定标识，用于清理离场玩家 / 复用集合时不额外分配。
+        private readonly HashSet<string> _halloweenHatSeenKeys = new HashSet<string>();
+        private readonly List<string> _halloweenHatStaleKeys = new List<string>(8);
+
+        // 万圣节·南瓜头：当前是否已实际套用（配置切换带 60 秒内置冷却）。
+        private bool _halloweenHatActive;
+        private float _halloweenHatNextToggleAt;
+        private float _halloweenHatNextCheck;
 
         // 舞王·舞动青春：玩家稳定标识 → 本次检测冷却的结束时刻。
         // 同一玩家在冷却窗口内的再次跳舞不再触发加成（配置「舞动青春-检测冷却」，默认 1 秒）。
@@ -1284,10 +1535,17 @@ namespace RollOfTheScout
         private bool _displaySyncDirty;
 
         // ---- 职业关键词 / 简介文本的广播节流 ----
-        // 文本是静态的（每个职业码一份），只有「出现新职业」或每 ClassDisplayNet.ClassTextResendSeconds 秒
-        // 才全量补发一次；否则每 2 秒随快照重发会白占带宽（尤其简介较长）。
+        // 文本是静态的（每个职业码一份）：出现新职业、快照参与者 / 职业变化时立即重发，
+        // 否则每 ClassDisplayNet.ClassTextResendSeconds 秒兜底补发一次（中途加入的旧版客机也能尽快拿到）。
         private int _lastClassTextHash;
         private float _nextClassTextTime;
+        /// <summary>
+        /// 上一次职业快照的「参与者 + 职业」哈希。只要名单 / 职业发生变化（有人中途加入、
+        /// 转职、复活后分配等），就**立即强制重发**职业名 / 关键词 / 简介，
+        /// 而不是等 30 秒的保底重发 —— 否则旧版附属模组（本地文案表缺少新职业码）会在这段窗口里
+        /// 显示成「None · 无职业」，职业介绍板块也会空白。
+        /// </summary>
+        private int _lastSnapshotActorHash;
 
         // ---- 「职业分配」面板文本缓存（按住显示时每帧读取，避免每帧重建字符串）----
         // 签名由 (角色 ViewID, 职业码, 昵称哈希) 组成：只有真正变化时才重建各行文本。
@@ -1419,9 +1677,18 @@ namespace RollOfTheScout
         private void ApplyClassChange(Character character, string id, ClassType oldType, ClassType newType)
         {
             _displaySyncDirty = true;   // 转职 / 模因污染改职 → 尽快把新快照同步给客机
+
+            // 关键：先丢弃「旧职业」留下的绝对写回校正任务，再清除状态。
+            // 否则 ClearAllNegativeStatuses 之后，TickInitialCurseGrant / TickPetrifyRestores 仍会按
+            // 旧职业的 Target（如领袖诅咒 20、石像鬼初始石化 40）把数值**重新写回来**，表现为
+            // 「转职后旧职业状态没清掉」。新职业的初始状态会在 EnsureInitialStatuses 重新登记，
+            // 因此这里移除是安全的。
+            _initialCurse.Remove(id);
+            _petrifyRestores.Remove(id);
+
             HostApi.ClearAllNegativeStatuses(character);
             Plugin.Log.LogInfo(
-                $"[RollOfTheScout] 改职：{Nick(character)} 已清除全部负面状态，准备施加新职业初始状态。");
+                $"[RollOfTheScout] 改职：{Nick(character)} 已清除全部负面状态（并取消旧职业的写回校正），准备施加新职业初始状态。");
 
             // 挑战者离开时：清除【顶级玩家】发放的黄金抓钩（`RescueHook_Infinite`）。
             // 该物品只在挑战者【顶级玩家】里发放，若不在改职时清掉，转职后仍会残留一把本职业专属物品。
@@ -1444,6 +1711,12 @@ namespace RollOfTheScout
             _levelGranted.Remove(id);
             _levelGrantAttempts.Remove(id);
             _initialStatusDone.Remove(id);
+            // 混乱末影人：改职后上一职业的周期检测状态（基线 / 计时器）立即失效，重新开始计时。
+            _chaosStates.Remove(id);
+            // 石像鬼：改职 / 离开后清掉位置采样基线，避免下次成为石像鬼时把旧坐标误判为移动。
+            _gargoyleStates.Remove(id);
+            // 炼金术士：改职后清掉该玩家本局累计的石头 / 汲取次数与背人基线，避免跨职业继承。
+            _alchemistStates.Remove(id);
             // 改职说明该玩家此刻存活（能食用转职物品），因此不再属于「中途加入·灵魂待复活」
             _joinSouls.Remove(id);
             _joinSoulAliveSince.Remove(id);
@@ -1500,6 +1773,12 @@ namespace RollOfTheScout
 
                 // 榔王·精品大果 / 上瘾 / 纤维化 / 没吃的赶紧戒
                 OnLangwangItemConsumed(item, character);
+
+                // 混乱末影人·末影：食用运动饮料 / 万灵药 +损伤
+                OnChaosEndermanItemConsumed(item, character);
+
+                // 捣蛋鬼·蛀牙：食用棉花糖 / 大棒棒糖 +损伤
+                OnTricksterItemConsumed(item, character);
             }
             catch (System.Exception e)
             {
@@ -1960,6 +2239,7 @@ namespace RollOfTheScout
 
             if (!PhotonNetwork.InRoom)
             {
+                ResetHalloweenHatState();
                 EndRun();
                 return;
             }
@@ -1969,9 +2249,14 @@ namespace RollOfTheScout
             // 否则局内关卡切换（更深的层数）也会被误判为离开，导致职业被重置。
             if (IsInAirportScene())
             {
+                // 万圣节南瓜头在机场大厅同样生效（配置自带开关判定与 1 秒节流，关闭时立即返回）。
+                TickHalloweenHats();
                 EndRun();
                 return;
             }
+
+            // 万圣节南瓜头：关卡内同样生效（内部会再判一次主机 / 总开关）。
+            TickHalloweenHats();
 
             if (!ModConfig.General.Enabled.Value) return;
 
@@ -2115,6 +2400,7 @@ namespace RollOfTheScout
             _scoutPeerHungerTimer = 0f;
             _scoutAllyInjuryTimer = 0f;
             _scoutAllyHungerTimer = 0f;
+            _scoutAllyStaminaTimer = 0f;
             _dancerDanceTimer = 0f;
             _daihaoVoiceTimer = 0f;
             _daihaoSliplTimer = 0f;
@@ -2252,6 +2538,42 @@ namespace RollOfTheScout
             _programmerCleanTimer = 0f;
             _programmerCopyTimer = 0f;
             _programmerCopies.Clear();
+            _chaosStates.Clear();
+            _chaosEatGuardUntil.Clear();
+            _chaosWaterZones.Clear();
+            _chaosWaterZoneRefreshAt = 0f;
+            _chaosPendingDropClears.Clear();
+            _gargoyleStates.Clear();
+            _gargoyleMoveTimer = 0f;
+            _gargoyleStatusTimer = 0f;
+            _gargoyleLightTimer = 0f;
+            _gargoyleGuardTimer = 0f;
+            _gargoyleShellTimer = 0f;
+            _gargoyleExempt.Clear();
+            _gargoyleExemptRaw = null;
+            _alchemistStates.Clear();
+            _alchemistCarryTimer = 0f;
+            _alchemistTools.Clear();
+            _alchemistToolRaw = null;
+            _alchemistStatusPool.Clear();
+            _alchemistStatusPoolRaw = null;
+            _alchemistStatusPoolWarnedRaw = null;
+            _alchemistExempt.Clear();
+            _alchemistExemptRaw = null;
+            _alchemistExtraEdible.Clear();
+            _alchemistExtraEdibleRaw = null;
+            _tricksterPandoraPending.Clear();
+            _tricksterTransferPending.Clear();
+            _tricksterNextTransferAt = 0f;
+            _tricksterSugarTimer = 0f;
+            _tricksterCandyPool.Clear();
+            _tricksterCandyNames.Clear();
+            _tricksterCandyNamesRaw = null;
+            _tricksterPickupBlacklist.Clear();
+            _tricksterPickupBlacklistRaw = null;
+            _tricksterCavity.Clear();
+            _tricksterCavityRaw = null;
+            _tricksterEatGuardUntil.Clear();
             _toasts.Clear();
             _toastExpiries.Clear();
             _toastVersion++;
@@ -2284,6 +2606,7 @@ namespace RollOfTheScout
             _nextDisplaySyncTime = 0f;
             _lastClassTextHash = 0;
             _nextClassTextTime = 0f;
+            _lastSnapshotActorHash = 0;
             InvalidateClassIntroCache();
             _classListSignature = int.MinValue;
             _classListLinesCache = null;
@@ -2404,6 +2727,35 @@ namespace RollOfTheScout
             _programmerCleanTimer = 0f;
             _programmerCopyTimer = 0f;
             ClearProgrammerCopies("一局结束");
+            _chaosStates.Clear();
+            _chaosEatGuardUntil.Clear();
+            _chaosWaterZones.Clear();
+            _chaosWaterZoneRefreshAt = 0f;
+            _chaosPendingDropClears.Clear();
+            _gargoyleStates.Clear();
+            _gargoyleMoveTimer = 0f;
+            _gargoyleStatusTimer = 0f;
+            _gargoyleLightTimer = 0f;
+            _gargoyleGuardTimer = 0f;
+            _gargoyleShellTimer = 0f;
+            _gargoyleExempt.Clear();
+            _gargoyleExemptRaw = null;
+            _alchemistStates.Clear();
+            _alchemistCarryTimer = 0f;
+            _alchemistTools.Clear();
+            _alchemistToolRaw = null;
+            _alchemistStatusPool.Clear();
+            _alchemistStatusPoolRaw = null;
+            _alchemistStatusPoolWarnedRaw = null;
+            _alchemistExempt.Clear();
+            _alchemistExemptRaw = null;
+            _alchemistExtraEdible.Clear();
+            _alchemistExtraEdibleRaw = null;
+            _tricksterPandoraPending.Clear();
+            _tricksterTransferPending.Clear();
+            _tricksterNextTransferAt = 0f;
+            _tricksterSugarTimer = 0f;
+            _tricksterEatGuardUntil.Clear();
             _toasts.Clear();
             _toastExpiries.Clear();
             _toastVersion++;
@@ -3925,6 +4277,16 @@ namespace RollOfTheScout
                         $"[RollOfTheScout] 受诅残魂：{Nick(character)} 诅咒+{total * 100f:0.#}"
                         + (addLevelBonus ? $"（含本层众魂阻挠 +{perLevel * 100f:0.#}）" : string.Empty)
                         + "（已记录为保护基准）");
+                    break;
+                }
+
+                case ClassType.Gargoyle:
+                {
+                    // 石躯：开局初始石化（0.40 = 40 点）。用绝对赋值 + 幂等校正，避免客机迟到初始化覆盖。
+                    float petrify = ModConfig.Gargoyle.InitialPetrify.Value;
+                    GrantInitialPetrify(character, petrify);
+                    Plugin.Log.LogInfo(
+                        $"[RollOfTheScout] 石躯：{Nick(character)} 开局石化 {Mathf.RoundToInt(petrify * 100f)}。");
                     break;
                 }
             }
@@ -6373,6 +6735,8 @@ namespace RollOfTheScout
                         if (anyMilesSoul) ApplyMilesDeath();
                         // 区·！？区区？！：真正死亡时在尸体处生成一只烤熟的早起虫儿
                         if (_ledger.GetClass(character) == ClassType.Qu) SpawnQuCookedWorm(character);
+                        // 混乱末影人·末影：真正死亡时在尸体处生成一个曲迁菇
+                        if (_ledger.GetClass(character) == ClassType.ChaosEnderman) SpawnChaosEndermanCorpseFungus(character);
                         CaptureOnDeath(character);
                     }
                     else if (wasDead && !dead)
@@ -7298,6 +7662,9 @@ namespace RollOfTheScout
         {
             float dt = Time.deltaTime;
 
+            // ---- 混乱末影人·末影：处理「直接丢弃曲迁菇 → 立即清除」的延迟销毁队列 ----
+            ProcessChaosPendingDropClears();
+
             // ---- 先驱·不屈：昏迷时立即清除全部负面状态（每局每人仅一次）----
             // 该效果依赖「昏迷瞬间」判定，故必须每帧采样（不能改成按间隔检测）；
             // 但没有先驱在场时可直接跳过整轮遍历。
@@ -7673,6 +8040,9 @@ namespace RollOfTheScout
             FireScoutTierStatus(characters, ref _scoutAllyHungerTimer,
                 ModConfig.Scout.AllyHungerIntervalSeconds.Value, 2, scoutRadius,
                 CharacterAfflictions.STATUSTYPE.Hunger, -ModConfig.Scout.AllyHungerReduce.Value);
+            FireScoutTierStamina(characters, ref _scoutAllyStaminaTimer,
+                ModConfig.Scout.AllyHungerIntervalSeconds.Value, 2, scoutRadius,
+                ModConfig.Scout.AllyExtraStamina.Value);
 
             // ---- 舞王·狂热舞者：定时强制舞王自己后空翻一次 ----
             _dancerDanceTimer += dt;
@@ -8082,7 +8452,1323 @@ namespace RollOfTheScout
 
             // ---- 程序员：BUG（随机昆虫）/ 熬夜（夜晚加速）/ 开挂（削状态 + 复制职业效果）----
             TickProgrammer(characters);
+
+            // ---- 混乱末影人：混乱传送（状态比对 / 易位 / 曲迁菇）/ 末影（水体 / 曲迁菇积攒）----
+            TickChaosEnderman(characters);
+
+            // ---- 石像鬼：石躯 / 石化（拾取由补丁处理）/ 破壳 / 畏光 / 守护 ----
+            TickGargoyle(characters);
+
+            // ---- 炼金术士：等价交换 / 能量汲取（拾取由补丁处理）/ 贤者之石 / 禁忌炼成 ----
+            TickAlchemist(characters);
+
+            // ---- 捣蛋鬼：发糖（半径发糖 / 满包捣蛋）/ 捣蛋·潘多拉延迟队列 / 蛀牙（食用由补丁处理）----
+            TickTrickster(characters);
         }
+
+        // ---------------------------------------------------------------
+        // 石像鬼（Gargoyle）：【石躯】/【石化】/【破壳】/【畏光】/【守护】
+        //
+        // 设计要点：
+        // · 「静止」用主机侧两次采样的角色中心位移判定（< 阈值视为静止），阈值与间隔均可配置；
+        // · 石化走 CharacterData.petrifyAmount 的绝对值通道（GetPetrify / SetPetrify，RPC_SyncPetrify），
+        //   与状态数组无关，因此不受 0.025 量子、也不受「原版状态通道排除 Petrify」影响；
+        // · 额外体力走 MoraleBoost；加速 / 无限体力 / 无敌走既有「临时物品喂食」通道（约 10 秒，无法改写时长）；
+        // · 「石化 ≥80 每次检测给无敌」先检查目标当前是否已带 Invincibility，避免重复生成临时物品。
+        // ---------------------------------------------------------------
+
+        private void TickGargoyle(List<Character> characters)
+        {
+            if (!ModConfig.General.Enabled.Value || !ModConfig.Gargoyle.Enabled.Value) return;
+            if (!_ledger.HasClassInRoom(ClassType.Gargoyle)) return;
+
+            float dt = Time.deltaTime;
+
+            // ---- 石躯·位移采样：每「位移检测间隔」秒比较一次位置 ----
+            float moveInterval = ModConfig.Gargoyle.MoveCheckIntervalSeconds.Value;
+            if (moveInterval > 0f)
+            {
+                _gargoyleMoveTimer += dt;
+                if (_gargoyleMoveTimer >= moveInterval)
+                {
+                    _gargoyleMoveTimer = 0f;
+                    foreach (var c in characters)
+                    {
+                        if (_ledger.GetClass(c) != ClassType.Gargoyle) continue;
+                        DoGargoyleMoveCheck(c);
+                    }
+                }
+            }
+
+            // ---- 石躯·状态收益：每「状态检测间隔」秒按石化值结算 ----
+            float statusInterval = ModConfig.Gargoyle.StatusCheckIntervalSeconds.Value;
+            if (statusInterval > 0f)
+            {
+                _gargoyleStatusTimer += dt;
+                if (_gargoyleStatusTimer >= statusInterval)
+                {
+                    _gargoyleStatusTimer = 0f;
+                    foreach (var c in characters)
+                    {
+                        if (_ledger.GetClass(c) != ClassType.Gargoyle) continue;
+                        if (IsDead(c)) continue;
+                        DoGargoyleStatusBenefits(c);
+                    }
+                }
+            }
+
+            // ---- 畏光：每「畏光-间隔」秒 ----
+            float lightInterval = ModConfig.Gargoyle.LightIntervalSeconds.Value;
+            if (lightInterval > 0f)
+            {
+                _gargoyleLightTimer += dt;
+                if (_gargoyleLightTimer >= lightInterval)
+                {
+                    _gargoyleLightTimer = 0f;
+                    foreach (var c in characters)
+                    {
+                        if (_ledger.GetClass(c) != ClassType.Gargoyle) continue;
+                        if (IsDead(c)) continue;
+                        DoGargoyleLightShy(c);
+                    }
+                }
+            }
+
+            // ---- 守护：每「守护-间隔」秒 ----
+            float guardInterval = ModConfig.Gargoyle.GuardIntervalSeconds.Value;
+            if (guardInterval > 0f)
+            {
+                _gargoyleGuardTimer += dt;
+                if (_gargoyleGuardTimer >= guardInterval)
+                {
+                    _gargoyleGuardTimer = 0f;
+                    foreach (var c in characters)
+                    {
+                        if (_ledger.GetClass(c) != ClassType.Gargoyle) continue;
+                        if (IsDead(c)) continue;
+                        DoGargoyleGuard(c);
+                    }
+                }
+            }
+
+            // ---- 破壳：每「破壳-间隔」秒检测；每次成功触发后按「破壳-冷却」跳过检测 ----
+            float shellInterval = ModConfig.Gargoyle.ShellIntervalSeconds.Value;
+            if (shellInterval > 0f)
+            {
+                _gargoyleShellTimer += dt;
+                if (_gargoyleShellTimer >= shellInterval)
+                {
+                    _gargoyleShellTimer = 0f;
+                    float cooldown = Mathf.Max(0f, ModConfig.Gargoyle.ShellCooldownSeconds.Value);
+                    float now = Time.time;
+                    foreach (var c in characters)
+                    {
+                        if (_ledger.GetClass(c) != ClassType.Gargoyle) continue;
+                        if (IsDead(c)) continue;
+
+                        string id = _ledger.IdOf(c);
+                        if (string.IsNullOrEmpty(id)) continue;
+                        var state = GetOrCreateGargoyleState(id);
+                        if (now < state.NextShellCheckAt) continue;   // 冷却中：不读石化、不结算
+
+                        bool triggered = DoGargoyleShellBreak(c);
+                        // 成功 → 进入冷却（期间连石化都不读）；失败 → 下个全局 tick 继续检查，避免与全局计时漂移叠加。
+                        state.NextShellCheckAt = triggered && cooldown > 0f ? now + cooldown : 0f;
+                    }
+                }
+            }
+        }
+
+        /// <summary>取得（或创建）某玩家的石像鬼周期状态。</summary>
+        private GargoyleState GetOrCreateGargoyleState(string id)
+        {
+            if (!_gargoyleStates.TryGetValue(id, out var state))
+            {
+                state = new GargoyleState();
+                _gargoyleStates[id] = state;
+            }
+            return state;
+        }
+
+        /// <summary>【石躯】位置采样：静止 +石化（到上限为止），移动 −石化。</summary>
+        private void DoGargoyleMoveCheck(Character gargoyle)
+        {
+            if (gargoyle == null) return;
+
+            string id = _ledger.IdOf(gargoyle);
+            if (string.IsNullOrEmpty(id)) return;
+
+            if (IsDead(gargoyle))
+            {
+                // 死亡 / 昏迷期间不采样：复活后重新建立位置基线，但保留【破壳】冷却状态。
+                var deadState = GetOrCreateGargoyleState(id);
+                deadState.HasLastCenter = false;
+                return;
+            }
+
+            var state = GetOrCreateGargoyleState(id);
+
+            Vector3 center = gargoyle.Center;
+            if (state.HasLastCenter)
+            {
+                float moved = Vector3.Distance(center, state.LastCenter);
+                int petrify = HostApi.GetPetrify(gargoyle);
+                if (moved < Mathf.Max(0f, ModConfig.Gargoyle.MoveThresholdMeters.Value))
+                {
+                    int cap = Mathf.Clamp(ModConfig.Gargoyle.PetrifyCap.Value, 0, 100);
+                    int gain = Mathf.Max(0, ModConfig.Gargoyle.StationaryPetrifyGain.Value);
+                    if (gain > 0 && petrify < cap)
+                        HostApi.SetPetrify(gargoyle, Mathf.Min(petrify + gain, cap));
+                }
+                else
+                {
+                    int loss = Mathf.Max(0, ModConfig.Gargoyle.MovingPetrifyLoss.Value);
+                    if (loss > 0 && petrify > 0)
+                        HostApi.SetPetrify(gargoyle, Mathf.Max(0, petrify - loss));
+                }
+            }
+
+            state.LastCenter = center;
+            state.HasLastCenter = true;
+        }
+
+        /// <summary>【石躯】按石化值结算状态收益（阈值 30 / 50 / 70 / 80）。</summary>
+        private void DoGargoyleStatusBenefits(Character gargoyle)
+        {
+            int petrify = HostApi.GetPetrify(gargoyle);
+
+            int drowsyThreshold = Mathf.RoundToInt(ModConfig.Gargoyle.DrowsyThreshold.Value * 100f);
+            if (petrify >= drowsyThreshold)
+            {
+                float drowsy = Mathf.Max(0f, ModConfig.Gargoyle.DrowsyReduce.Value);
+                if (drowsy > 0f) HostApi.ApplyStatus(gargoyle, CharacterAfflictions.STATUSTYPE.Drowsy, -drowsy);
+            }
+
+            int staminaThreshold = Mathf.RoundToInt(ModConfig.Gargoyle.StaminaThreshold.Value * 100f);
+            if (petrify >= staminaThreshold)
+            {
+                float stamina = ModConfig.Gargoyle.StaminaGain.Value;
+                if (stamina != 0f) HostApi.BoostExtraStamina(gargoyle, stamina);
+
+                float poison = Mathf.Max(0f, ModConfig.Gargoyle.PoisonReduce.Value);
+                float spores = Mathf.Max(0f, ModConfig.Gargoyle.SporesReduce.Value);
+                if (poison > 0f || spores > 0f)
+                {
+                    HostApi.ApplyStatusPair(gargoyle,
+                        CharacterAfflictions.STATUSTYPE.Poison, -poison,
+                        CharacterAfflictions.STATUSTYPE.Spores, -spores);
+                }
+            }
+
+            int hungerThreshold = Mathf.RoundToInt(ModConfig.Gargoyle.HungerThreshold.Value * 100f);
+            if (petrify >= hungerThreshold)
+            {
+                float hunger = Mathf.Max(0f, ModConfig.Gargoyle.HungerReduce.Value);
+                float cold = Mathf.Max(0f, ModConfig.Gargoyle.ColdReduce.Value);
+                float hot = Mathf.Max(0f, ModConfig.Gargoyle.HotReduce.Value);
+                if (hunger > 0f || cold > 0f || hot > 0f)
+                {
+                    HostApi.ApplyStatuses(gargoyle,
+                        CharacterAfflictions.STATUSTYPE.Hunger, -hunger,
+                        CharacterAfflictions.STATUSTYPE.Cold, -cold,
+                        CharacterAfflictions.STATUSTYPE.Hot, -hot);
+                }
+            }
+
+            int invincibleThreshold = Mathf.RoundToInt(ModConfig.Gargoyle.InvincibleThreshold.Value * 100f);
+            if (ModConfig.Gargoyle.InvincibleEnabled.Value && petrify >= invincibleThreshold)
+            {
+                if (!HasAffliction(gargoyle, Affliction.AfflictionType.Invincibility))
+                    FeedTransientItem(gargoyle, ItemNames.FortifiedMilk, "石躯");
+            }
+        }
+
+        /// <summary>【畏光】白天且石化低于阈值时叠加困倦；困倦达到阈值时叠加损伤与石化。</summary>
+        private void DoGargoyleLightShy(Character gargoyle)
+        {
+            int petrify = HostApi.GetPetrify(gargoyle);
+            var dayNight = DayNightManager.instance;
+            bool isDay = dayNight == null || dayNight.isDay >= 0.5f;
+            if (isDay && petrify < ModConfig.Gargoyle.LightLowPetrifyThreshold.Value)
+            {
+                float drowsy = ModConfig.Gargoyle.LightDayDrowsy.Value;
+                if (drowsy > 0f)
+                    HostApi.ApplyStatus(gargoyle, CharacterAfflictions.STATUSTYPE.Drowsy, drowsy);
+            }
+
+            float threshold = ModConfig.Gargoyle.LightDrowsyThreshold.Value;
+            if (threshold > 0f
+                && HostApi.GetStatus(gargoyle, CharacterAfflictions.STATUSTYPE.Drowsy) >= threshold)
+            {
+                float injury = Mathf.Max(0f, ModConfig.Gargoyle.LightDrowsyInjury.Value);
+                if (injury > 0f)
+                    HostApi.ApplyStatus(gargoyle, CharacterAfflictions.STATUSTYPE.Injury, injury);
+
+                int gain = Mathf.Max(0, ModConfig.Gargoyle.LightDrowsyPetrify.Value);
+                if (gain > 0)
+                    HostApi.SetPetrify(gargoyle, HostApi.GetPetrify(gargoyle) + gain);
+            }
+        }
+
+        /// <summary>【守护】高石化时，为半径内其他玩家减伤并各给一次无敌（不含自己）。</summary>
+        private void DoGargoyleGuard(Character gargoyle)
+        {
+            int petrify = HostApi.GetPetrify(gargoyle);
+            if (petrify < ModConfig.Gargoyle.GuardPetrifyThreshold.Value) return;
+
+            float radius = Mathf.Max(0f, ModConfig.Gargoyle.GuardRadius.Value);
+            if (radius <= 0f) return;
+
+            float injury = Mathf.Max(0f, ModConfig.Gargoyle.GuardInjuryReduce.Value);
+            bool invincible = ModConfig.Gargoyle.GuardInvincible.Value;
+
+            foreach (var target in HostApi.GetCharactersInRadius(gargoyle.Center, radius))
+            {
+                if (target == null || target == gargoyle) continue;
+                if (IsDead(target)) continue;
+
+                if (injury > 0f)
+                    HostApi.ApplyStatus(target, CharacterAfflictions.STATUSTYPE.Injury, -injury);
+
+                if (invincible && !HasAffliction(target, Affliction.AfflictionType.Invincibility))
+                    FeedTransientItem(target, ItemNames.FortifiedMilk, "守护");
+            }
+        }
+
+        /// <summary>【破壳】石化 &gt; 阈值时清空石化，自身获得无敌 / 加速 / 无限体力，范围内全员清困倦 + 回体力。返回是否成功触发。</summary>
+        private bool DoGargoyleShellBreak(Character gargoyle)
+        {
+            int petrify = HostApi.GetPetrify(gargoyle);
+            if (petrify <= ModConfig.Gargoyle.ShellPetrifyThreshold.Value) return false;
+
+            HostApi.SetPetrify(gargoyle, Mathf.Clamp(petrify - Mathf.Max(0, ModConfig.Gargoyle.ShellPetrifyClear.Value), 0, 100));
+
+            if (ModConfig.Gargoyle.ShellInvincible.Value
+                && !HasAffliction(gargoyle, Affliction.AfflictionType.Invincibility))
+                FeedTransientItem(gargoyle, ItemNames.FortifiedMilk, "破壳");
+
+            if (ModConfig.Gargoyle.ShellSprint.Value
+                && !HasAffliction(gargoyle, Affliction.AfflictionType.FasterBoi))
+                GrantSprint(gargoyle, "破壳");
+
+            if (ModConfig.Gargoyle.ShellInfiniteStamina.Value
+                && !HasAffliction(gargoyle, Affliction.AfflictionType.InfiniteStamina))
+                GrantInfiniteStamina(gargoyle, "破壳");
+
+            float radius = Mathf.Max(0f, ModConfig.Gargoyle.ShellRadius.Value);
+            float drowsy = Mathf.Max(0f, ModConfig.Gargoyle.ShellDrowsyReduce.Value);
+            float stamina = ModConfig.Gargoyle.ShellStaminaGain.Value;
+            if (radius <= 0f) return true;
+
+            foreach (var target in HostApi.GetCharactersInRadius(gargoyle.Center, radius))
+            {
+                if (target == null || IsDead(target)) continue;
+                if (drowsy > 0f)
+                    HostApi.ApplyStatus(target, CharacterAfflictions.STATUSTYPE.Drowsy, -drowsy);
+                if (stamina != 0f)
+                    HostApi.BoostExtraStamina(target, stamina);
+            }
+
+            Plugin.Log.LogInfo(
+                $"[RollOfTheScout] 破壳：{Nick(gargoyle)} 石化 {petrify} → 0，范围内玩家清困倦 / 回体力。");
+            return true;
+        }
+
+        /// <summary>
+        /// 石像鬼·【石化】（拾取）：由 <see cref="Patches.GargoylePickupPatch"/> 在
+        /// <c>Item.RequestPickup</c> 前缀调用。返回拾取处理结果：
+        /// · Keep = 正常拾取；Vanish = 世界物品直接消失；
+        /// · GiveStone = 食物被石化成石头（由补丁发放）；GiveStatue = 石头化为童军雕像（由补丁发放）。
+        /// 30% 无变化会保留石头；其余随机分支都会消耗掉石头（雕像分支在条件成立时改为发放雕像）。
+        /// </summary>
+        public enum GargoylePickupResult
+        {
+            Keep,
+            Vanish,
+            GiveStone,
+            GiveStatue,
+        }
+
+        public GargoylePickupResult OnGargoylePickup(Item item, Character character)
+        {
+            if (!_inRun) return GargoylePickupResult.Keep;
+            if (!ModConfig.General.Enabled.Value || !ModConfig.Gargoyle.Enabled.Value) return GargoylePickupResult.Keep;
+            if (item == null || character == null || IsDead(character)) return GargoylePickupResult.Keep;
+            if (_ledger.GetClass(character) != ClassType.Gargoyle) return GargoylePickupResult.Keep;
+
+            string name = PrefabNameOf(item);
+            int petrify = HostApi.GetPetrify(character);
+
+            // ---- 食物 → 石头 ----
+            if (petrify >= ModConfig.Gargoyle.FoodPetrifyThreshold.Value
+                && IsEdibleItem(item)
+                && !NameListContains(ModConfig.Gargoyle.FoodExemptItems.Value,
+                    ref _gargoyleExemptRaw, _gargoyleExempt, name))
+            {
+                // 与原版拾取落点一致：物品栏全满时仍可进主手；两者都满才交还原版。
+                if (!HostApi.CanAcceptPickup(character)) return GargoylePickupResult.Keep;
+
+                var stone = ResolveGargoylePrefab(ModConfig.Gargoyle.FoodToStoneItem.Value,
+                    ref _gargoyleStoneItemName, ref _gargoyleStonePrefab);
+                if (stone != null)
+                {
+                    Plugin.Log.LogInfo(
+                        $"[RollOfTheScout] 石化：{Nick(character)} 的 {name} 被石化成 {stone.gameObject.name}（石化 {petrify}）。");
+                    return GargoylePickupResult.GiveStone;
+                }
+                return GargoylePickupResult.Keep;
+            }
+
+            // ---- 拾取石头 → 随机结果 ----
+            var configuredStone = ResolveGargoylePrefab(ModConfig.Gargoyle.StoneItem.Value,
+                ref _gargoyleStoneItemName, ref _gargoyleStonePrefab);
+            if (configuredStone == null || configuredStone.itemID != item.itemID) return GargoylePickupResult.Keep;
+
+            // 与原版拾取落点一致：物品栏全满时仍可进主手；两者都满才交还原版。
+            if (!HostApi.CanAcceptPickup(character)) return GargoylePickupResult.Keep;
+
+            float p0 = Mathf.Clamp01(ModConfig.Gargoyle.StoneNoChangeChance.Value);
+            float p1 = Mathf.Min(1f, p0 + Mathf.Clamp01(ModConfig.Gargoyle.StonePetrifyStaminaChance.Value));
+            float p2 = Mathf.Min(1f, p1 + Mathf.Clamp01(ModConfig.Gargoyle.StoneHungerSprintChance.Value));
+            float p3 = Mathf.Min(1f, p2 + Mathf.Clamp01(ModConfig.Gargoyle.StoneCleanseChance.Value));
+            float p4 = Mathf.Min(1f, p3 + Mathf.Clamp01(ModConfig.Gargoyle.StoneStatueChance.Value));
+            float roll = Random.value;
+
+            if (roll < p0)
+            {
+                return GargoylePickupResult.Keep;
+            }
+
+            if (roll < p1)
+            {
+                int gain = Mathf.Max(0, ModConfig.Gargoyle.StonePetrifyGain.Value);
+                if (gain > 0)
+                    HostApi.SetPetrify(character, Mathf.Clamp(petrify + gain, 0, 100));
+
+                float injury = Mathf.Max(0f, ModConfig.Gargoyle.StoneInjuryReduce.Value);
+                if (injury > 0f)
+                    HostApi.ApplyStatus(character, CharacterAfflictions.STATUSTYPE.Injury, -injury);
+
+                float stamina = ModConfig.Gargoyle.StoneStaminaGain.Value;
+                if (stamina != 0f)
+                    HostApi.BoostExtraStamina(character, stamina);
+
+                Plugin.Log.LogInfo(
+                    $"[RollOfTheScout] 石化·石头：{Nick(character)} +{gain} 石化、-{injury * 100f:0.#} 损伤、+{stamina} 体力（石头消失）。");
+                return GargoylePickupResult.Vanish;
+            }
+
+            if (roll < p2)
+            {
+                int gain = Mathf.Max(0, ModConfig.Gargoyle.StonePetrifyGain.Value);
+                if (gain > 0)
+                    HostApi.SetPetrify(character, Mathf.Clamp(petrify + gain, 0, 100));
+
+                float hunger = Mathf.Max(0f, ModConfig.Gargoyle.StoneHungerReduce.Value);
+                if (hunger > 0f)
+                    HostApi.ApplyStatus(character, CharacterAfflictions.STATUSTYPE.Hunger, -hunger);
+
+                if (ModConfig.Gargoyle.StoneSprintEnabled.Value)
+                    GrantSprint(character, "石化·解饿", clearDrowsyAfter: false);
+
+                Plugin.Log.LogInfo(
+                    $"[RollOfTheScout] 石化·解饿：{Nick(character)} +{gain} 石化、-{hunger * 100f:0.#} 饥饿并获得一次加速（石头消失）。");
+                return GargoylePickupResult.Vanish;
+            }
+
+            if (roll < p3)
+            {
+                HostApi.ClearNegativeStatuses(character, excludeCurse: true, excludePetrify: true);
+
+                if (ModConfig.Gargoyle.StoneCleanseInvincible.Value
+                    && !HasAffliction(character, Affliction.AfflictionType.Invincibility))
+                    FeedTransientItem(character, ItemNames.FortifiedMilk, "石化·清负");
+
+                Plugin.Log.LogInfo(
+                    $"[RollOfTheScout] 石化·清负：{Nick(character)} 清除负面状态（诅咒与石化除外，石头消失）。");
+                return GargoylePickupResult.Vanish;
+            }
+
+            if (roll < p4)
+            {
+                int high = ModConfig.Gargoyle.StoneStatueHighThreshold.Value;
+                int low = ModConfig.Gargoyle.StoneStatueLowThreshold.Value;
+                int clear = Mathf.Max(0, ModConfig.Gargoyle.StoneStatuePetrifyClear.Value);
+
+                if (petrify >= high)
+                {
+                    HostApi.SetPetrify(character, Mathf.Clamp(petrify - clear, 0, 100));
+                    Plugin.Log.LogInfo(
+                        $"[RollOfTheScout] 石化·雕像：{Nick(character)} 石化 {petrify} 清零，石头化为 {ModConfig.Gargoyle.StatueItem.Value}。");
+                    return GargoylePickupResult.GiveStatue;
+                }
+
+                if (petrify >= low)
+                {
+                    float curse = Mathf.Max(0f, ModConfig.Gargoyle.StoneStatueCurse.Value);
+                    if (curse > 0f)
+                        HostApi.ApplyStatus(character, CharacterAfflictions.STATUSTYPE.Curse, curse);
+                    HostApi.SetPetrify(character, Mathf.Clamp(petrify - clear, 0, 100));
+
+                    Plugin.Log.LogInfo(
+                        $"[RollOfTheScout] 石化·雕像：{Nick(character)} +{curse * 100f:0.#} 诅咒、石化 {petrify} 清零，" +
+                        $"石头化为 {ModConfig.Gargoyle.StatueItem.Value}。");
+                    return GargoylePickupResult.GiveStatue;
+                }
+
+                Plugin.Log.LogInfo(
+                    $"[RollOfTheScout] 石化·雕像：{Nick(character)} 石化 {petrify} 未达到 {low}，本次无效果（石头保留）。");
+                return GargoylePickupResult.Keep;
+            }
+
+            return GargoylePickupResult.Keep;
+        }
+
+        /// <summary>取「石头 / 童军雕像」预制体（按配置串缓存，配置变化时才重新解析）。</summary>
+        private static Item ResolveGargoylePrefab(string configuredName, ref string cachedName, ref Item cachedPrefab)
+        {
+            string name = configuredName != null ? configuredName.Trim() : string.Empty;
+            if (!string.IsNullOrEmpty(cachedName)
+                && string.Equals(cachedName, name, System.StringComparison.OrdinalIgnoreCase))
+                return cachedPrefab;
+
+            cachedName = name;
+            cachedPrefab = null;
+            if (!string.IsNullOrEmpty(name) && ItemDatabase.TryGetItem(name, out Item prefab))
+                cachedPrefab = prefab;
+            return cachedPrefab;
+        }
+
+        // ---------------------------------------------------------------
+        // 炼金术士（Alchemist）：【等价交换】/【能量汲取】/【贤者之石】/【禁忌炼成】
+        //
+        // · 【等价交换】【能量汲取】都由 Patches.AlchemistPickupPatch 挂在 Item.RequestPickup 上：
+        //   只有这里才能销毁世界物品（工具转化 = 销毁原物品 + 发放替代物；食物销毁 = 直接销毁）。
+        // · 【贤者之石】的计数只在【等价交换】结果为「石头」时累加，第 N 个石头改走特殊炼制。
+        // · 【禁忌炼成】用 0.5 秒轮询 data.carriedPlayer 的**变化**（新背起一名玩家）触发，不每帧扫描。
+        // ---------------------------------------------------------------
+
+        /// <summary>【等价交换 / 能量汲取】拾取处理结果。</summary>
+        public enum AlchemistPickupResult
+        {
+            /// <summary>正常拾取（不处理）。</summary>
+            Keep,
+            /// <summary>世界物品直接消失。</summary>
+            Vanish,
+            /// <summary>世界物品消失，并由补丁发放 <c>givePrefab</c>。</summary>
+            Give,
+        }
+
+        private AlchemistState GetOrCreateAlchemistState(string id)
+        {
+            if (!_alchemistStates.TryGetValue(id, out var state))
+            {
+                state = new AlchemistState();
+                _alchemistStates[id] = state;
+            }
+            return state;
+        }
+
+        /// <summary>【等价交换】工具物品池判定（按配置原文缓存解析结果）。</summary>
+        private bool IsAlchemistTool(string prefabName)
+        {
+            if (string.IsNullOrEmpty(prefabName)) return false;
+            string raw = ModConfig.Alchemist.EquivToolItems.Value;
+            if (raw != _alchemistToolRaw)
+            {
+                _alchemistToolRaw = raw;
+                _alchemistTools.Clear();
+                foreach (var n in WeightedPicker.ParseList(raw)) _alchemistTools.Add(n);
+            }
+            return _alchemistTools.Contains(prefabName);
+        }
+
+        /// <summary>【等价交换】负面状态池：按配置解析（带缓存），无法识别的名字只警告一次。</summary>
+        private List<CharacterAfflictions.STATUSTYPE> AlchemistStatusPool()
+        {
+            string raw = ModConfig.Alchemist.EquivStatusPool.Value;
+            if (raw == _alchemistStatusPoolRaw && _alchemistStatusPool.Count > 0) return _alchemistStatusPool;
+
+            _alchemistStatusPoolRaw = raw;
+            _alchemistStatusPool.Clear();
+            var invalid = new List<string>();
+            foreach (var name in WeightedPicker.ParseList(raw))
+            {
+                if (System.Enum.TryParse(name, true, out CharacterAfflictions.STATUSTYPE type)
+                    && System.Enum.IsDefined(typeof(CharacterAfflictions.STATUSTYPE), type))
+                {
+                    if (!_alchemistStatusPool.Contains(type)) _alchemistStatusPool.Add(type);
+                }
+                else
+                {
+                    invalid.Add(name);
+                }
+            }
+
+            if (invalid.Count > 0 && raw != _alchemistStatusPoolWarnedRaw)
+            {
+                _alchemistStatusPoolWarnedRaw = raw;
+                Plugin.Log.LogWarning(
+                    $"[RollOfTheScout] 等价交换：状态池中有 {invalid.Count} 个无法识别的名字已跳过：{string.Join(", ", invalid)}");
+            }
+            return _alchemistStatusPool;
+        }
+
+        /// <summary>【等价交换】随机抽取负面状态并增加。</summary>
+        private void ApplyAlchemistRandomStatus(Character character)
+        {
+            float amount = ModConfig.Alchemist.EquivStatusAmount.Value;
+            if (amount <= 0f) return;
+
+            var pool = AlchemistStatusPool();
+            if (pool.Count == 0) return;
+
+            var type = pool[Random.Range(0, pool.Count)];
+            HostApi.ApplyStatus(character, type, amount);
+            Plugin.Log.LogInfo(
+                $"[RollOfTheScout] 等价交换：{Nick(character)} 随机负面状态 {type} +{amount * 100f:0.#}。");
+        }
+
+        /// <summary>【等价交换】按配置概率抽取一组结果，再在组内等概率取一件物品。</summary>
+        private string PickAlchemistConversionTarget()
+        {
+            float[] chances =
+            {
+                ModConfig.Alchemist.ConvertStoneStickChance.Value,
+                ModConfig.Alchemist.ConvertRootBeanChance.Value,
+                ModConfig.Alchemist.ConvertRopeDrinkChance.Value,
+                ModConfig.Alchemist.ConvertClimbToolChance.Value,
+                ModConfig.Alchemist.ConvertBalloonChance.Value,
+                ModConfig.Alchemist.ConvertAntiGravityChance.Value,
+                ModConfig.Alchemist.ConvertPandoraChance.Value,
+                ModConfig.Alchemist.ConvertExplosiveChance.Value,
+                ModConfig.Alchemist.ConvertStatueChance.Value,
+                ModConfig.Alchemist.ConvertDollChance.Value,
+            };
+            string[] raws =
+            {
+                ModConfig.Alchemist.ConvertStoneStickItems.Value,
+                ModConfig.Alchemist.ConvertRootBeanItems.Value,
+                ModConfig.Alchemist.ConvertRopeDrinkItems.Value,
+                ModConfig.Alchemist.ConvertClimbToolItems.Value,
+                ModConfig.Alchemist.ConvertBalloonItems.Value,
+                ModConfig.Alchemist.ConvertAntiGravityItems.Value,
+                ModConfig.Alchemist.ConvertPandoraItems.Value,
+                ModConfig.Alchemist.ConvertExplosiveItems.Value,
+                ModConfig.Alchemist.ConvertStatueItems.Value,
+                ModConfig.Alchemist.ConvertDollItems.Value,
+            };
+
+            float total = 0f;
+            for (int i = 0; i < chances.Length; i++) total += Mathf.Max(0f, chances[i]);
+            if (total <= 0f) return null;
+
+            float roll = Random.value * total;
+            float acc = 0f;
+            int index = chances.Length - 1;
+            for (int i = 0; i < chances.Length; i++)
+            {
+                acc += Mathf.Max(0f, chances[i]);
+                if (roll < acc) { index = i; break; }
+            }
+
+            var list = WeightedPicker.ParseList(raws[index]);
+            if (list.Count == 0) return null;
+            return list[Random.Range(0, list.Count)];
+        }
+
+        /// <summary>【能量汲取】销毁可食用物品后的结算；每 N 次做一次额外奖励判定。</summary>
+        private void DoAlchemistDrain(Character character, string itemName, AlchemistState state)
+        {
+            float reduce = ModConfig.Alchemist.DrainStatusReduce.Value;
+            int petrifyReduce = Mathf.Max(0, ModConfig.Alchemist.DrainPetrifyReduce.Value);
+            bool hasPetrify = false;
+            if (reduce > 0f || petrifyReduce > 0)
+            {
+                // 与法师·净化共用同一份「可治愈负面状态」下标表（含诅咒与石化）。
+                // 石化单独按「能量汲取-石化削减」以整数点结算（走相对负增量，避免绝对写回覆盖在途变化）。
+                var data = new float[HostApi.StatusArrayLength];
+                int petrifyIndex = (int)CharacterAfflictions.STATUSTYPE.Petrify;
+                foreach (int idx in MageCurableIndices)
+                {
+                    if (idx == petrifyIndex) continue;
+                    if (reduce > 0f) data[idx] = -reduce;
+                }
+                if (petrifyReduce > 0)
+                {
+                    data[petrifyIndex] = -petrifyReduce / 100f;
+                    hasPetrify = true;
+                }
+                HostApi.SendStatuses(character, data);
+            }
+
+            float stamina = ModConfig.Alchemist.DrainStamina.Value;
+            if (stamina != 0f) HostApi.BoostExtraStamina(character, stamina);
+
+            state.DrainCount++;
+
+            int every = ModConfig.Alchemist.DrainRewardEvery.Value;
+            bool reward = every > 0 && state.DrainCount >= every;
+            if (reward) state.DrainCount = 0;
+
+            Plugin.Log.LogInfo(
+                $"[RollOfTheScout] 能量汲取：{Nick(character)} 拾取的 {itemName} 被销毁，"
+                + $"负面 -{reduce * 100f:0.#}、石化 -{(hasPetrify ? petrifyReduce : 0)}、额外体力 +{stamina}"
+                + $"（累计 {state.DrainCount}/{every}）。");
+
+            if (reward) GiveAlchemistDrainReward(character);
+        }
+
+        /// <summary>【能量汲取】每 N 次的额外奖励：万灵药 / 潘多拉餐盒 / 炸药。</summary>
+        private void GiveAlchemistDrainReward(Character character)
+        {
+            float pCure = Mathf.Clamp01(ModConfig.Alchemist.DrainCureAllChance.Value);
+            float pBox = Mathf.Clamp01(ModConfig.Alchemist.DrainPandoraChance.Value);
+            float pDyn = Mathf.Clamp01(ModConfig.Alchemist.DrainDynamiteChance.Value);
+            float total = pCure + pBox + pDyn;
+            if (total <= 0f) return;
+
+            float roll = Random.value * total;
+            string prefab;
+            string label;
+            if (roll < pCure)
+            {
+                prefab = ModConfig.Alchemist.DrainCureAllItem.Value;
+                label = "万灵药";
+            }
+            else if (roll < pCure + pBox)
+            {
+                prefab = ModConfig.Alchemist.DrainPandoraItem.Value;
+                label = "潘多拉餐盒";
+            }
+            else
+            {
+                prefab = ModConfig.Alchemist.DrainDynamiteItem.Value;
+                label = "炸药";
+            }
+
+            if (string.IsNullOrEmpty(prefab)) return;
+
+            // 优先放入空物品栏；三栏全满时 AddItem 会落到主手临时槽并立即握持。
+            if (HostApi.GiveItemForceHold(character, prefab, out _))
+            {
+                Plugin.Log.LogInfo($"[RollOfTheScout] 能量汲取：{Nick(character)} 额外奖励 {label}（{prefab}）。");
+            }
+            else
+            {
+                Plugin.Log.LogWarning($"[RollOfTheScout] 能量汲取：{Nick(character)} 的额外奖励 {prefab} 发放失败。");
+            }
+        }
+
+        /// <summary>【贤者之石】第 N 个石头的特殊炼制。</summary>
+        private AlchemistPickupResult DoAlchemistSageRoll(Character character, out string givePrefab)
+        {
+            givePrefab = null;
+
+            float p1 = Mathf.Clamp01(ModConfig.Alchemist.SageStatueChance.Value);
+            float p2 = p1 + Mathf.Clamp01(ModConfig.Alchemist.SageDollChance.Value);
+            float p3 = p2 + Mathf.Clamp01(ModConfig.Alchemist.SageGemChance.Value);
+            float roll = Random.value;
+
+            if (roll < p1)
+            {
+                givePrefab = ModConfig.Alchemist.SageStatueItem.Value;
+                Plugin.Log.LogInfo($"[RollOfTheScout] 贤者之石：{Nick(character)} 的石头化为童军雕像（{givePrefab}）。");
+                return AlchemistPickupResult.Give;
+            }
+            if (roll < p2)
+            {
+                givePrefab = ModConfig.Alchemist.SageDollItem.Value;
+                Plugin.Log.LogInfo($"[RollOfTheScout] 贤者之石：{Nick(character)} 的石头化为古老玩偶（{givePrefab}）。");
+                return AlchemistPickupResult.Give;
+            }
+            if (roll < p3)
+            {
+                var gems = WeightedPicker.ParseList(ModConfig.Alchemist.SageGemItems.Value);
+                if (gems.Count > 0)
+                {
+                    givePrefab = gems[Random.Range(0, gems.Count)];
+                    Plugin.Log.LogInfo($"[RollOfTheScout] 贤者之石：{Nick(character)} 的石头化为童军宝石 {givePrefab}。");
+                    return AlchemistPickupResult.Give;
+                }
+            }
+
+            // 剩余概率：石头消失 + 清空所有负面 + 额外体力 + 无敌。
+            if (!ModConfig.Alchemist.SageCleanseEnabled.Value)
+            {
+                givePrefab = ItemNames.Stone;
+                Plugin.Log.LogInfo($"[RollOfTheScout] 贤者之石：清负分支已关闭，{Nick(character)} 的石头保留。");
+                return AlchemistPickupResult.Give;
+            }
+
+            HostApi.ClearAllNegativeStatuses(character);
+
+            float stamina = ModConfig.Alchemist.SageCleanseStamina.Value;
+            if (stamina != 0f) HostApi.BoostExtraStamina(character, stamina);
+
+            if (ModConfig.Alchemist.SageCleanseInvincible.Value
+                && !HasAffliction(character, Affliction.AfflictionType.Invincibility))
+                FeedTransientItem(character, ItemNames.FortifiedMilk, "贤者之石");
+
+            Plugin.Log.LogInfo(
+                $"[RollOfTheScout] 贤者之石：{Nick(character)} 的石头消失，清除所有负面、额外体力 +{stamina}、获得一次无敌。");
+            return AlchemistPickupResult.Vanish;
+        }
+
+        /// <summary>【禁忌炼成】轮询：检测「新背起一名玩家」并炼成。</summary>
+        private void TickAlchemist(List<Character> characters)
+        {
+            if (!ModConfig.General.Enabled.Value || !ModConfig.Alchemist.Enabled.Value) return;
+            if (!_ledger.HasClassInRoom(ClassType.Alchemist)) return;
+
+            float interval = ModConfig.Alchemist.ForbiddenIntervalSeconds.Value;
+            if (interval <= 0f) return;
+
+            _alchemistCarryTimer += Time.deltaTime;
+            if (_alchemistCarryTimer < interval) return;
+            _alchemistCarryTimer = 0f;
+
+            foreach (var alchemist in characters)
+            {
+                if (_ledger.GetClass(alchemist) != ClassType.Alchemist) continue;
+                if (IsDead(alchemist)) continue;
+
+                string id = _ledger.IdOf(alchemist);
+                if (string.IsNullOrEmpty(id)) continue;
+
+                var state = GetOrCreateAlchemistState(id);
+                var carried = alchemist.data != null ? alchemist.data.carriedPlayer : null;
+                if (carried == null || carried.photonView == null)
+                {
+                    state.LastCarriedId = null;
+                    continue;
+                }
+
+                string carriedId = _ledger.IdOf(carried);
+                if (string.IsNullOrEmpty(carriedId)) continue;
+                if (string.Equals(state.LastCarriedId, carriedId, System.StringComparison.Ordinal)) continue;
+
+                state.LastCarriedId = carriedId;
+                if (IsTrueDead(carried)) continue;
+
+                DoAlchemistForbidden(alchemist, carried);
+            }
+        }
+
+        /// <summary>【禁忌炼成】背起玩家时的两种结果。</summary>
+        private void DoAlchemistForbidden(Character alchemist, Character carried)
+        {
+            float chance = Mathf.Clamp01(ModConfig.Alchemist.ForbiddenSkeletonChance.Value);
+            if (Random.value < chance)
+            {
+                if (carried.data != null && carried.data.isSkeleton)
+                {
+                    Plugin.Log.LogInfo(
+                        $"[RollOfTheScout] 禁忌炼成：{Nick(carried)} 已经是骷髅，本次不重复转化。");
+                    return;
+                }
+
+                // 原版「使用骸骨之书」是使用者客户端本地执行的施法流程（Skelleton.Interact_CastFinished），
+                // 主机无法代客机触发；这里直接调用原版 SetSkeleton(true)（内部 RPC_SyncSkeleton，RpcTarget.All），
+                // 效果等价于该玩家被强制使用骸骨之书。
+                carried.data.SetSkeleton(true);
+
+                float curse = Mathf.Max(0f, ModConfig.Alchemist.ForbiddenSelfCurse.Value);
+                if (curse > 0f)
+                    HostApi.ApplyStatus(alchemist, CharacterAfflictions.STATUSTYPE.Curse, curse);
+
+                Plugin.Log.LogInfo(
+                    $"[RollOfTheScout] 禁忌炼成：{Nick(alchemist)} 背起 {Nick(carried)}，将其变为骷髅，自身诅咒 +{curse * 100f:0.#}。");
+                return;
+            }
+
+            string skull = ModConfig.Alchemist.ForbiddenSkullItem.Value;
+            if (!string.IsNullOrEmpty(skull))
+                FeedTransientItem(carried, skull, "禁忌炼成");
+
+            SpawnAlchemistZombieAt(carried.Center);
+
+            Plugin.Log.LogInfo(
+                $"[RollOfTheScout] 禁忌炼成：{Nick(alchemist)} 背起 {Nick(carried)}，使其被使用 {skull}，并在原地生成 1 个僵尸。");
+        }
+
+        /// <summary>【禁忌炼成】在被背者原地生成 1 个僵尸（复用法师·尸变的唤醒方式）。</summary>
+        private void SpawnAlchemistZombieAt(Vector3 position)
+        {
+            var candidates = new List<string>();
+            string configured = ModConfig.Alchemist.ForbiddenZombieItem.Value;
+            if (!string.IsNullOrEmpty(configured)) candidates.Add(configured);
+            candidates.Add(ItemNames.MushroomZombie);
+            candidates.Add("MushroomZombie_Player");
+            candidates.Add("0_Items/" + ItemNames.MushroomZombie);
+
+            var go = SpawnMagePrefab(candidates.ToArray(), position, Random.rotation);
+            if (go == null)
+            {
+                Plugin.Log.LogWarning("[RollOfTheScout] 禁忌炼成：僵尸生成失败（找不到已注册的僵尸预制体）。");
+                return;
+            }
+
+            var zombie = go.GetComponent<MushroomZombie>();
+            if (zombie == null)
+            {
+                PhotonNetwork.Destroy(go);
+                return;
+            }
+
+            zombie.initialWakeUpTime = 0f;
+            var ch = go.GetComponent<Character>();
+            if (ch != null)
+            {
+                ch.data.fallSeconds = 0f;
+                ch.data.currentRagdollControll = 0f;
+                ch.refs.animations.ResetForceSpeed();
+                ch.refs.ragdoll.ToggleKinematic(false);
+            }
+            zombie.currentState = MushroomZombie.State.WakingUp;
+        }
+
+        /// <summary>【等价交换 / 能量汲取】拾取拦截（供 <see cref="Patches.AlchemistPickupPatch"/> 调用）。</summary>
+        public AlchemistPickupResult OnAlchemistPickup(Item item, Character character, out string givePrefab)
+        {
+            givePrefab = null;
+            if (!_inRun) return AlchemistPickupResult.Keep;
+            if (!ModConfig.General.Enabled.Value || !ModConfig.Alchemist.Enabled.Value) return AlchemistPickupResult.Keep;
+            if (item == null || character == null || IsDead(character)) return AlchemistPickupResult.Keep;
+            if (_ledger.GetClass(character) != ClassType.Alchemist) return AlchemistPickupResult.Keep;
+
+            string id = _ledger.IdOf(character);
+            if (string.IsNullOrEmpty(id)) return AlchemistPickupResult.Keep;
+
+            string name = PrefabNameOf(item);
+            if (string.IsNullOrEmpty(name)) return AlchemistPickupResult.Keep;
+
+            var state = GetOrCreateAlchemistState(id);
+
+            // 拾取落点与原版一致：物品栏有空位，或全满但主手临时槽为空（且未在攀爬）。
+            // 两者都不满足时本次拾取本来就会被原版拒绝（物品留在原地），效果也不应触发。
+            if (!HostApi.CanAcceptPickup(character)) return AlchemistPickupResult.Keep;
+
+            // ---- 【等价交换】优先：只要在工具物品池里，就一律按工具处理 ----
+            // 必须先于【能量汲取】判定：便携烤炉、魔豆等「可使用道具」也可能带消耗动作，
+            // 但它们不是食物，不能被误判为可食用物品而销毁。
+            bool isTool = IsAlchemistTool(name);
+            if (isTool && state.NextEquivAt > Time.time) return AlchemistPickupResult.Keep;
+
+            // ---- 【能量汲取】：可食用物品（豁免表以外、且不是工具）直接销毁 ----
+            bool isFood = IsEdibleItem(item)
+                || NameListContains(ModConfig.Alchemist.DrainExtraEdibleItems.Value,
+                    ref _alchemistExtraEdibleRaw, _alchemistExtraEdible, name);
+            if (!isTool
+                && isFood
+                && !NameListContains(ModConfig.Alchemist.DrainExemptItems.Value,
+                    ref _alchemistExemptRaw, _alchemistExempt, name))
+            {
+                // 3 秒触发冷却：冷却期内按正常拾取处理（物品进入物品栏 / 主手，不被销毁）。
+                if (state.NextDrainAt > Time.time) return AlchemistPickupResult.Keep;
+                state.NextDrainAt = Time.time + Mathf.Max(0f, ModConfig.Alchemist.DrainCooldownSeconds.Value);
+
+                DoAlchemistDrain(character, name, state);
+                return AlchemistPickupResult.Vanish;
+            }
+
+            // ---- 【等价交换】：工具物品 → 随机负面 + 随机转化（带冷却） ----
+            if (!isTool) return AlchemistPickupResult.Keep;
+
+            if (state.NextEquivAt > Time.time) return AlchemistPickupResult.Keep;
+
+            state.NextEquivAt = Time.time + Mathf.Max(0f, ModConfig.Alchemist.EquivCooldownSeconds.Value);
+            ApplyAlchemistRandomStatus(character);
+
+            string target = PickAlchemistConversionTarget();
+            if (string.IsNullOrEmpty(target))
+            {
+                Plugin.Log.LogWarning(
+                    $"[RollOfTheScout] 等价交换：{Nick(character)} 拾取的 {name} 未能解析出转化目标（检查转换物品配置），保持原样。");
+                return AlchemistPickupResult.Keep;
+            }
+            if (string.Equals(target, name, System.StringComparison.OrdinalIgnoreCase))
+            {
+                Plugin.Log.LogInfo(
+                    $"[RollOfTheScout] 等价交换：{Nick(character)} 拾取的 {name} 转化结果与本身相同，保持原样。");
+                return AlchemistPickupResult.Keep;
+            }
+
+            // ---- 【贤者之石】：转化结果为石头时累计，每 N 个改走特殊炼制 ----
+            int threshold = ModConfig.Alchemist.SageThreshold.Value;
+            if (threshold > 0 && string.Equals(target, ItemNames.Stone, System.StringComparison.OrdinalIgnoreCase))
+            {
+                state.StoneCount++;
+                if (state.StoneCount >= threshold)
+                {
+                    state.StoneCount = 0;
+                    return DoAlchemistSageRoll(character, out givePrefab);
+                }
+            }
+
+            givePrefab = target;
+            Plugin.Log.LogInfo(
+                $"[RollOfTheScout] 等价交换：{Nick(character)} 拾取的 {name} 被转化为 {target}。");
+            return AlchemistPickupResult.Give;
+        }
+
+        // ---------------------------------------------------------------
+        // 捣蛋鬼（Trickster）：【发糖】/【捣蛋】/【蛀牙】
+        //
+        // 设计要点：
+        // · 每帧只做两件 O(1) 的事：推进发糖计时器、清空「潘多拉延迟队列」；
+        //   场上没有捣蛋鬼时直接返回（HasClassInRoom），不做玩家遍历。
+        // · 发糖 / 捣蛋只在计时器到点时对**半径内目标**做一次遍历；糖果池 / 黑名单 / 蛀牙清单
+        //   都按配置原文缓存，只在配置变化时重建。
+        // · 潘多拉分支以「队列 + 生效时刻」摊开执行，不占用协程，也不与临时物品喂食队列抢帧。
+        // ---------------------------------------------------------------
+
+        private void TickTrickster(List<Character> characters)
+        {
+            if (!ModConfig.General.Enabled.Value || !ModConfig.Trickster.Enabled.Value) return;
+
+            // 先推进已到时的潘多拉施加 / 物品转移（与场上是否有捣蛋鬼无关，避免残留队列卡死）
+            TickTricksterPendingPandora();
+            TickTricksterPendingTransfers();
+
+            if (!_ledger.HasClassInRoom(ClassType.Trickster)) return;
+
+            float interval = ModConfig.Trickster.SugarIntervalSeconds.Value;
+            if (interval <= 0f)
+            {
+                _tricksterSugarTimer = 0f;
+                return;
+            }
+
+            _tricksterSugarTimer += Time.deltaTime;
+            if (_tricksterSugarTimer < interval) return;
+            _tricksterSugarTimer = 0f;
+
+            foreach (var trickster in characters)
+            {
+                if (_ledger.GetClass(trickster) != ClassType.Trickster) continue;
+                if (IsDead(trickster)) continue;
+                DoTricksterSugar(trickster);
+            }
+        }
+
+        /// <summary>【发糖】：为半径内每名其他玩家发 1 颗糖；物品栏已满者改为【捣蛋】。</summary>
+        private void DoTricksterSugar(Character trickster)
+        {
+            float radius = Mathf.Max(0f, ModConfig.Trickster.SugarRadius.Value);
+            float staminaPer = ModConfig.Trickster.SugarSelfStaminaPerPlayer.Value;
+            float trickDrowsy = ModConfig.Trickster.TrickDrowsy.Value;
+            float selfDrowsy = ModConfig.Trickster.TrickSelfDrowsy.Value;
+
+            var targets = HostApi.GetCharactersInRadius(trickster.Center, radius);
+
+            int gave = 0;
+            int tricked = 0;
+            foreach (var target in targets)
+            {
+                if (target == null || target == trickster) continue;
+                if (IsDead(target)) continue;
+
+                // 先判「物品栏是否真的有空格」：
+                //   · 有空位 → 只走发糖；即使发放失败也**不**转捣蛋（避免波及本应发糖的玩家）
+                //   · 无空位 → 才是【捣蛋】的目标
+                if (HostApi.HasEmptyItemSlot(target))
+                {
+                    string candy = PickTricksterCandy();
+                    if (!string.IsNullOrEmpty(candy)
+                        && HostApi.GiveItemToInventorySlots(target, candy, out _))
+                    {
+                        gave++;
+                    }
+                    else
+                    {
+                        Plugin.Log.LogWarning(
+                            $"[RollOfTheScout] 发糖：{Nick(target)} 有空物品栏但糖果发放失败，本次跳过（不转为捣蛋）。");
+                    }
+                    continue;
+                }
+
+                // ---- 【捣蛋】：仅针对「物品栏已满、无法获得糖果」的玩家 ----
+                tricked++;
+                if (trickDrowsy > 0f)
+                    HostApi.ApplyStatus(target, CharacterAfflictions.STATUSTYPE.Drowsy, trickDrowsy);
+
+                // 每影响一名玩家立即结算自身困倦：不再把多次结果合并成一次增量，
+                // 避免远端状态还没同步回来时看起来像「没有获得困倦」。
+                if (selfDrowsy > 0f)
+                    HostApi.ApplyStatus(trickster, CharacterAfflictions.STATUSTYPE.Drowsy, selfDrowsy);
+
+                DoTricksterTrick(trickster, target);
+            }
+
+            if (staminaPer > 0f && gave > 0) HostApi.BoostExtraStamina(trickster, staminaPer * gave);
+
+            if (gave == 0 && tricked == 0) return;
+            Plugin.Log.LogInfo(
+                $"[RollOfTheScout] 发糖：{Nick(trickster)} 半径 {radius:0.#} 米内发放糖果 {gave} 人、" +
+                $"捣蛋 {tricked} 人（自身困倦 +{(selfDrowsy * tricked) * 100f:0.#}）。");
+        }
+
+        /// <summary>【捣蛋】特殊判定：70% 转移物品 / 30% 连续施加潘多拉（默认值可配）。</summary>
+        private void DoTricksterTrick(Character trickster, Character target)
+        {
+            float transferChance = Mathf.Clamp01(ModConfig.Trickster.TrickTransferChance.Value);
+
+            if (UnityEngine.Random.value < transferChance)
+            {
+                // 同一帧可能捣蛋多名玩家：转移不能立刻全部执行，否则物品栏 / 背包同步重叠会丢物品。
+                // 统一放进队列，按「捣蛋-转移间隔」（默认 1 秒）依次结算。
+                float spacing = Mathf.Max(0f, ModConfig.Trickster.TrickTransferIntervalSeconds.Value);
+                float applyAt = Mathf.Max(Time.time, _tricksterNextTransferAt);
+                _tricksterNextTransferAt = applyAt + spacing;
+                _tricksterTransferPending.Add(new TricksterTransferPending
+                {
+                    From = target,
+                    To = trickster,
+                    ApplyAt = applyAt,
+                });
+                return;
+            }
+
+            int count = ModConfig.Trickster.TrickPandoraCount.Value;
+            if (count <= 0) return;
+            float interval = Mathf.Max(0f, ModConfig.Trickster.TrickPandoraIntervalSeconds.Value);
+
+            for (int i = 0; i < count; i++)
+            {
+                _tricksterPandoraPending.Add(new TricksterPandoraPending
+                {
+                    Target = target,
+                    ApplyAt = Time.time + i * interval,
+                });
+            }
+
+            ShowTricksterNotice(trickster, target,
+                $"Trickster {Nick(trickster)} hit {Nick(target)} with a super Pandora trick!"
+                + "\n捣蛋鬼 " + Nick(trickster) + " 对 " + Nick(target) + " 施加了超级潘多拉捣蛋！");
+        }
+
+        /// <summary>推进【捣蛋·转移】延迟队列：按配置间隔逐件转交，避免同一帧同步重叠导致物品丢失。</summary>
+        private void TickTricksterPendingTransfers()
+        {
+            if (_tricksterTransferPending.Count == 0) return;
+
+            float now = Time.time;
+            // 队列按加入顺序天然有序：只处理队首已到时的条目
+            while (_tricksterTransferPending.Count > 0 && now >= _tricksterTransferPending[0].ApplyAt)
+            {
+                var pending = _tricksterTransferPending[0];
+                _tricksterTransferPending.RemoveAt(0);
+
+                if (pending == null || pending.From == null || pending.To == null) continue;
+                TransferOneRandomItem(pending.From, pending.To);
+            }
+        }
+
+        /// <summary>推进【捣蛋·潘多拉】延迟队列：到点者逐个施加潘多拉魔盒。</summary>
+        private void TickTricksterPendingPandora()
+        {
+            if (_tricksterPandoraPending.Count == 0) return;
+
+            float now = Time.time;
+            for (int i = _tricksterPandoraPending.Count - 1; i >= 0; i--)
+            {
+                var pending = _tricksterPandoraPending[i];
+                if (pending == null || pending.Target == null)
+                {
+                    _tricksterPandoraPending.RemoveAt(i);
+                    continue;
+                }
+                if (now < pending.ApplyAt) continue;
+
+                GrantPandoraBox(pending.Target);
+                _tricksterPandoraPending.RemoveAt(i);
+            }
+        }
+
+        /// <summary>
+        /// 【捣蛋·转移】：从目标玩家的 3 个物品栏中随机取 1 件物品，销毁原物品后转交给捣蛋鬼
+        /// （优先进捣蛋鬼的空物品栏，已满则在捣蛋鬼脚下生成）。
+        ///
+        /// 清空走原版 <c>Player.EmptySlot(slot, andBroadcast:true)</c>：主机调用时会先本地清空、
+        /// 再向 Others 广播 <c>SyncInventoryRPC</c>，因此客机零安装也能看到物品被拿走。
+        /// 随机取用「蓄水池抽样」，不额外分配列表。
+        /// </summary>
+        private void TransferOneRandomItem(Character from, Character to)
+        {
+            if (from == null || to == null) return;
+            var inventory = from.player;
+            if (inventory == null || inventory.itemSlots == null) return;
+
+            int slotCount = Mathf.Min(3, inventory.itemSlots.Length);   // 只取 3 个物品栏，不含背包槽
+            int pick = -1;
+            int seen = 0;
+            for (int i = 0; i < slotCount; i++)
+            {
+                var slot = inventory.itemSlots[i];
+                if (slot == null || slot.IsEmpty()) continue;
+                seen++;
+                if (UnityEngine.Random.Range(0, seen) == 0) pick = i;
+            }
+            if (pick < 0)
+            {
+                Plugin.Log.LogInfo($"[RollOfTheScout] 捣蛋·转移：{Nick(from)} 的物品栏没有可转移的物品。");
+                return;
+            }
+
+            var prefab = inventory.itemSlots[pick].prefab;
+            string name = PrefabNameOf(prefab);
+            if (string.IsNullOrEmpty(name)) return;
+
+            inventory.EmptySlot(Optionable<byte>.Some((byte)pick), true);
+
+            // 收纳顺序：捣蛋鬼空物品栏 → 已装备背包（普通 / 滑稽背包）→ 脚下生成
+            if (HostApi.GiveItemToInventorySlots(to, name, out _))
+            {
+                Plugin.Log.LogInfo($"[RollOfTheScout] 捣蛋·转移：{Nick(from)} 的物品 {name} 被转交给 {Nick(to)}。");
+            }
+            else if (HostApi.TryGiveItemToBackpack(to, name))
+            {
+                Plugin.Log.LogInfo($"[RollOfTheScout] 捣蛋·转移：{Nick(from)} 的物品 {name} 转交 {Nick(to)} 时物品栏已满，已放入其背包。");
+            }
+            else
+            {
+                HostApi.SpawnItemAtFeet(to, name);
+                Plugin.Log.LogInfo(
+                    $"[RollOfTheScout] 捣蛋·转移：{Nick(from)} 的物品 {name} 转交 {Nick(to)} 时物品栏与背包均已满，改为生成在其脚下。");
+            }
+
+            // 定向提示：仅捣蛋鬼本人、被抢玩家本人与房主主机可见
+            TricksterItemNames(prefab, name, out string itemEn, out string itemZh);
+            ShowTricksterNotice(to, from,
+                $"Trickster {Nick(to)} stole {Nick(from)}'s {itemEn}!"
+                + "\n捣蛋鬼 " + Nick(to) + " 抢走了 " + Nick(from) + " 的 " + itemZh + "！");
+        }
+
+        /// <summary>按「糖果池 + 权重」抽 1 颗糖；配置无效时退回默认三项（混合坚果 5 / 棉花糖 3 / 大棒棒糖 1）。</summary>
+        private string PickTricksterCandy()
+        {
+            RefreshTricksterCandyNames();
+
+            // 权重每次现读：管理员只改「糖果权重」时无需重新触发名称缓存
+            _tricksterCandyPool.Clear();
+            foreach (var name in _tricksterCandyNames)
+            {
+                int weight;
+                if (string.Equals(name, ItemNames.TrailMix, System.StringComparison.OrdinalIgnoreCase))
+                    weight = ModConfig.Trickster.CandyWeightTrailMix.Value;
+                else if (string.Equals(name, ItemNames.Marshmallow, System.StringComparison.OrdinalIgnoreCase))
+                    weight = ModConfig.Trickster.CandyWeightMarshmallow.Value;
+                else if (string.Equals(name, ItemNames.Lollipop, System.StringComparison.OrdinalIgnoreCase))
+                    weight = ModConfig.Trickster.CandyWeightLollipop.Value;
+                else
+                    weight = 1;   // 自定义糖果没有独立权重项，默认 1
+                if (weight <= 0) continue;
+                _tricksterCandyPool.Add(new WeightedItem(name, weight));
+            }
+
+            // 全部权重为 0 → 退回默认三项，避免「发糖一件都不发」
+            if (_tricksterCandyPool.Count == 0)
+            {
+                _tricksterCandyPool.Add(new WeightedItem(ItemNames.TrailMix,
+                    Mathf.Max(1, ModConfig.Trickster.CandyWeightTrailMix.Value)));
+                _tricksterCandyPool.Add(new WeightedItem(ItemNames.Marshmallow,
+                    Mathf.Max(1, ModConfig.Trickster.CandyWeightMarshmallow.Value)));
+                _tricksterCandyPool.Add(new WeightedItem(ItemNames.Lollipop,
+                    Mathf.Max(1, ModConfig.Trickster.CandyWeightLollipop.Value)));
+            }
+
+            return WeightedPicker.Pick(_tricksterCandyPool);
+        }
+
+        /// <summary>按配置原文刷新糖果**名称**序（带缓存，只在配置池文本变化时执行）。</summary>
+        private void RefreshTricksterCandyNames()
+        {
+            string raw = ModConfig.Trickster.CandyPool.Value;
+            if (raw == _tricksterCandyNamesRaw) return;
+
+            _tricksterCandyNamesRaw = raw;
+            _tricksterCandyNames.Clear();
+
+            var names = WeightedPicker.ParseList(raw);
+            if (names.Count == 0)
+            {
+                names.Add(ItemNames.TrailMix);
+                names.Add(ItemNames.Marshmallow);
+                names.Add(ItemNames.Lollipop);
+            }
+            _tricksterCandyNames.AddRange(names);
+        }
+
+        /// <summary>拾取可食用物品 → 随机糖果（供 <see cref="Patches.TricksterPickupPatch"/> 调用）。</summary>
+        public TricksterPickupResult OnTricksterPickup(Item item, Character character, out string candyPrefab)
+        {
+            candyPrefab = null;
+            if (!_inRun) return TricksterPickupResult.Keep;
+            if (!ModConfig.General.Enabled.Value || !ModConfig.Trickster.Enabled.Value) return TricksterPickupResult.Keep;
+            if (item == null || character == null || IsDead(character)) return TricksterPickupResult.Keep;
+            if (_ledger.GetClass(character) != ClassType.Trickster) return TricksterPickupResult.Keep;
+
+            float chance = Mathf.Clamp01(ModConfig.Trickster.PickupCandyChance.Value);
+            if (chance <= 0f) return TricksterPickupResult.Keep;
+
+            string name = PrefabNameOf(item);
+            if (string.IsNullOrEmpty(name)) return TricksterPickupResult.Keep;
+
+            // 只有「可食用物品」才会被替换（只认食物：回饥饿动作 / 食物标签 / 烤过；不接受通用 Action_Consume）
+            if (!IsTricksterEdibleItem(item)) return TricksterPickupResult.Keep;
+
+            if (NameListContains(ModConfig.Trickster.PickupCandyBlacklist.Value,
+                    ref _tricksterPickupBlacklistRaw, _tricksterPickupBlacklist, name))
+                return TricksterPickupResult.Keep;
+
+            if (UnityEngine.Random.value >= chance) return TricksterPickupResult.Keep;
+
+            // 与原版拾取落点一致：能接住才替换，否则原版本就会把物品留在原地
+            if (!HostApi.CanAcceptPickup(character)) return TricksterPickupResult.Keep;
+
+            string candy = PickTricksterCandy();
+            if (string.IsNullOrEmpty(candy)) return TricksterPickupResult.Keep;
+
+            candyPrefab = candy;
+            Plugin.Log.LogInfo(
+                $"[RollOfTheScout] 拾取变糖：{Nick(character)} 拾取的可食用物品 {name} 被替换为 {candy}。");
+            return TricksterPickupResult.Replace;
+        }
+
+        /// <summary>
+        /// 捣蛋鬼·【蛀牙】：食用棉花糖 / 大棒棒糖后自身 +损伤。
+        ///
+        /// 调用来源有两个（互为备份，去重窗口见 <see cref="TricksterEatDedupWindow"/>）：
+        /// 1. <c>Item.Consume</c> 的 Harmony 补丁（<see cref="Patches.TricksterEatPatch"/>）；
+        /// 2. 游戏自身的全局事件 <c>GlobalEvents.OnItemConsumed</c>（见 <see cref="HandleItemConsumed"/>）。
+        /// </summary>
+        public void OnTricksterItemConsumed(Item item, Character character)
+        {
+            if (!_inRun) return;
+            if (item == null || character == null) return;
+            if (_ledger.GetClass(character) != ClassType.Trickster) return;
+
+            float injury = ModConfig.Trickster.CavityInjury.Value;
+            if (injury <= 0f) return;
+
+            string name = PrefabNameOf(item);
+            if (string.IsNullOrEmpty(name)) return;
+            if (!NameListContains(ModConfig.Trickster.CavityItems.Value,
+                    ref _tricksterCavityRaw, _tricksterCavity, name)) return;
+
+            string id = _ledger.IdOf(character);
+            if (!string.IsNullOrEmpty(id))
+            {
+                if (_tricksterEatGuardUntil.TryGetValue(id, out float guardUntil) && Time.time < guardUntil) return;
+                _tricksterEatGuardUntil[id] = Time.time + TricksterEatDedupWindow;
+            }
+
+            HostApi.ApplyStatus(character, CharacterAfflictions.STATUSTYPE.Injury, injury);
+            Plugin.Log.LogInfo(
+                $"[RollOfTheScout] 蛀牙：{Nick(character)} 食用了 {name}，损伤+{injury * 100f:0.#}");
+        }
+
 
         // ---------------------------------------------------------------
         // 圣人（Saint）：教诲 / 完美主义 / 辟谷养生 / 跌落神坛
@@ -8621,7 +10307,13 @@ namespace RollOfTheScout
         {
             var character = FindCharacterByActor(actorNumber);
             int classCode = character != null ? (int)_ledger.GetClass(character) : 0;
-            if (classCode != (int)ClassType.MilesSoul) _milesLocalReady.Remove(actorNumber);
+            if (classCode != (int)ClassType.MilesSoul)
+            {
+                // 非残魂客机不需要 Kind 8 配置：旧版附属模组每次 Hello 都会收到一条无用事件，
+                // 这里直接跳过，既减少事件量，也避免旧版模块对未知职业码做多余的状态解析。
+                _milesLocalReady.Remove(actorNumber);
+                return;
+            }
             ClassDisplayNet.SendMilesGameplayState(actorNumber,
                 classCode.ToString(System.Globalization.CultureInfo.InvariantCulture) + "|" + MilesGameplayConfigCached());
         }
@@ -8803,13 +10495,21 @@ namespace RollOfTheScout
                 // 并额外 +`零号守则-额外体力`，且不计入次数。
                 else if (usage == MilesGemUsage.FeedDowned && ModConfig.MilesSoul.RuleZeroHealAssist.Value)
                 {
-                    int baseline = preUsePetrify >= 0 ? preUsePetrify : HostApi.GetPetrify(character);
-                    float assistStamina = ModConfig.MilesSoul.RuleZeroHealAssistExtraStamina.Value;
-                    RegisterMilesZeroPetrifyCancel(character, 0f, baseline, assistStamina);
+                    if (preUsePetrify < 0)
+                    {
+                        // 没有「使用前」基准就无法知道本次追加了多少石化：宁可不清，也不能拿代价后的当前值当基准（那等于不生效）。
+                        Plugin.Log.LogWarning(
+                            $"[RollOfTheScout] 零号守则：{Nick(character)} 喂给昏迷队友，但未记录到「使用前」石化值，本次无法等量清除（请检查宝石动作 / 喂食前缀补丁是否生效）。");
+                    }
+                    else
+                    {
+                        float assistStamina = ModConfig.MilesSoul.RuleZeroHealAssistExtraStamina.Value;
+                        RegisterMilesZeroPetrifyCancel(character, 0f, preUsePetrify, assistStamina);
 
-                    Plugin.Log.LogInfo(
-                        $"[RollOfTheScout] 童军的毅力：{Nick(character)} 喂给昏迷队友 → 零号守则：石化抵消至 {Mathf.Clamp(baseline, 0, 100)}"
-                        + $"（等量清除本次追加、不计入众魂阻挠；使用前基准 {baseline}），抵消后额外体力+{assistStamina * 100f:0.#}。");
+                        Plugin.Log.LogInfo(
+                            $"[RollOfTheScout] 童军的毅力：{Nick(character)} 喂给昏迷队友 → 零号守则：石化抵消至 {Mathf.Clamp(preUsePetrify, 0, 100)}"
+                            + $"（等量清除本次追加、不计入众魂阻挠；使用前基准 {preUsePetrify}），抵消后额外体力+{assistStamina * 100f:0.#}。");
+                    }
                 }
                 // 情形①：对自己使用 —— 【封印之力】子效果：−石化、−饥饿。
                 else
@@ -9369,8 +11069,20 @@ namespace RollOfTheScout
                     _milesZeroExtraStaminaApplied.Add(id);
                     Plugin.Log.LogInfo($"[RollOfTheScout] 零号守则：{Nick(c)} 石化抵消已完成，额外体力+{stamina * 100f:0.#}。");
                 }
-                if (Time.time >= until && _milesZeroExtraStaminaApplied.Contains(id))
+                if (Time.time >= until)
+                {
+                    // 窗口到期仍高于基准（同步过晚 / 持续外部石化）：强制收尾，避免条目永久残留后无限压制石化。
+                    if (!_milesZeroExtraStaminaApplied.Contains(id))
+                    {
+                        float stamina = _milesZeroExtraStamina.TryGetValue(id, out float value) ? value : 0f;
+                        if (stamina != 0f) HostApi.BoostExtraStamina(c, stamina);
+                        _milesZeroExtraStaminaApplied.Add(id);
+                        Plugin.Log.LogWarning(
+                            $"[RollOfTheScout] 零号守则：{Nick(c)} 石化未在 3 秒窗口内回到使用前基准（当前 {cur} > 基准 {target}），" +
+                            $"已在窗口结束时兜底发放额外体力+{stamina * 100f:0.#}（可能受石化上限影响）。");
+                    }
                     (done ??= new List<string>()).Add(id);
+                }
             }
             if (done != null)
             {
@@ -9400,8 +11112,13 @@ namespace RollOfTheScout
         public void OnEmotePlayed(Character dancer, string emoteName)
         {
             if (dancer == null || string.IsNullOrEmpty(emoteName)) return;
-            if (!_inRun) return;
             if (!ModConfig.General.Enabled.Value) return;
+
+            // 万圣节·南瓜头：在机场 / 关卡内都生效 —— 必须放在 `if (!_inRun) return;` 之前，
+            // 否则在机场大厅做耸肩无法恢复原本头饰。
+            OnHalloweenShrugEmote(dancer, emoteName);
+
+            if (!_inRun) return;
 
             // 性能：舞王会高频连续做表情（还会让周围玩家一起做）。
             // 本局既没有舞王、也没开表情转职时，**重复**表情直接丢弃；
@@ -9683,6 +11400,8 @@ namespace RollOfTheScout
             int accessory = ModConfig.Daihao.AvatarAccessory.Value;
             int outfit = ModConfig.Daihao.AvatarOutfit.Value;
             int hat = ModConfig.Daihao.AvatarHat.Value;
+            // 万圣节南瓜头生效期间，帽子由万圣节效果独占；否则两者每秒互相覆盖会来回闪烁。
+            if (_halloweenHatActive) hat = -1;
             int sash = ModConfig.Daihao.AvatarSash.Value;
             int medal = ModConfig.Daihao.AvatarMedal.Value;
             float monitorSeconds = ModConfig.Daihao.AvatarMonitorSeconds.Value;
@@ -9882,6 +11601,384 @@ namespace RollOfTheScout
             }
         }
 
+        // ---------------------------------------------------------------
+        // 万圣节·南瓜头（通用配置；机场大厅与关卡内均生效）
+        //
+        // 性能要点：
+        // · 配置关闭且从未启用时，每帧只做一次 bool 判断后返回；
+        // · 开启期间每 1 秒才遍历一次玩家列表（房间人数级别），且只在帽子被客户端同步覆盖时才广播；
+        // · 集合复用（_halloweenHatSeenActors / _halloweenHatStaleActors），稳态零分配；
+        // · 不挂在 EndRun（机场每帧都会调用 EndRun），因此机场 / 换关都不会误还原。
+        // ---------------------------------------------------------------
+
+        /// <summary>每帧推进万圣节南瓜头：配置切换（60 秒内置冷却）+ 开启期间 1 秒一次的漂移检测。</summary>
+        private void TickHalloweenHats()
+        {
+            if (!PhotonNetwork.IsMasterClient) return;
+
+            // 总开关被关闭时，若仍有已套用的南瓜头，先安全还原一次再退出。
+            if (!ModConfig.General.Enabled.Value)
+            {
+                if (_halloweenHatActive)
+                {
+                    RevertHalloweenHats();
+                    _halloweenHatLastDesired = false;   // 重新启用模组后，配置为 true 视为一次新的切换
+                }
+                return;
+            }
+
+            bool desired = ModConfig.General.HalloweenPumpkinHat.Value;
+            float now = Time.time;
+
+            // 配置项切换的 60 秒冷却：冷却期间发生的切换**直接丢弃、不排队**。
+            // 用「本帧是否发生了新的切换动作」区分「冷却期间被丢弃的旧变化」与「冷却结束后的新切换」。
+            bool changedNow = desired != _halloweenHatLastDesired;
+            _halloweenHatLastDesired = desired;
+
+            if (desired != _halloweenHatActive)
+            {
+                if (now < _halloweenHatNextToggleAt) return;   // 冷却期内：忽略本次变化
+                if (!changedNow) return;                       // 冷却结束后才看到的旧变化：同样丢弃
+
+                _halloweenHatNextToggleAt = now + HalloweenHatToggleCooldownSeconds;
+                if (desired) ApplyHalloweenHats();
+                else RevertHalloweenHats();
+                return;
+            }
+
+            // 已关闭且无需还原时，不做任何玩家遍历。
+            if (!desired) return;
+            if (now < _halloweenHatNextCheck) return;
+            _halloweenHatNextCheck = now + 1f;
+            ReapplyHalloweenHats();
+        }
+
+        /// <summary>开启：记录每名在场玩家（含机场）的原始帽子，并强制换成南瓜头。</summary>
+        private void ApplyHalloweenHats()
+        {
+            var service = GameHandler.GetService<PersistentPlayerDataService>();
+            if (service == null) return;
+
+            _halloweenHatActive = true;
+            _halloweenHatNotified.Clear();
+            _halloweenHatShowingOriginal.Clear();
+            _halloweenHatShrugCooldownUntil.Clear();
+
+            int changed = 0;
+            _halloweenHatSeenKeys.Clear();
+            var all = Character.AllCharacters;
+            if (all != null)
+            {
+                for (int i = 0; i < all.Count; i++)
+                {
+                    var c = all[i];
+                    if (!CanUseHalloweenHatTarget(c)) continue;
+                    var player = c.photonView.Owner;
+                    string key = HalloweenKeyOf(player);
+                    if (key == null || !_halloweenHatSeenKeys.Add(key)) continue;
+                    changed += ForcePumpkinHat(service, player, key);
+                }
+            }
+            PruneHalloweenHatEntries();
+
+            Plugin.Log.LogInfo(
+                $"[RollOfTheScout] 万圣节：南瓜头已开启，本帧改写 {changed} 名玩家的头饰（含机场大厅）。");
+        }
+
+        /// <summary>开启期间每秒检测：中途加入 / 退出重进 / 客户端同步覆盖时重新套用（耸肩过的玩家除外）。</summary>
+        private void ReapplyHalloweenHats()
+        {
+            var service = GameHandler.GetService<PersistentPlayerDataService>();
+            if (service == null) return;
+
+            _halloweenHatSeenKeys.Clear();
+            var all = Character.AllCharacters;
+            if (all != null)
+            {
+                for (int i = 0; i < all.Count; i++)
+                {
+                    var c = all[i];
+                    if (!CanUseHalloweenHatTarget(c)) continue;
+                    var player = c.photonView.Owner;
+                    string key = HalloweenKeyOf(player);
+                    if (key == null || !_halloweenHatSeenKeys.Add(key)) continue;
+                    if (_halloweenHatShowingOriginal.Contains(key)) continue;   // 已用耸肩切回原帽
+                    ForcePumpkinHat(service, player, key);
+                }
+            }
+            PruneHalloweenHatEntries();
+        }
+
+        /// <summary>把单个玩家的帽子强制为南瓜头；首次见到时记录其原始帽子。返回是否发生改写（0 / 1）。</summary>
+        private int ForcePumpkinHat(PersistentPlayerDataService service, Photon.Realtime.Player player, string key)
+        {
+            if (player == null || service == null || string.IsNullOrEmpty(key)) return 0;
+
+            var data = service.GetPlayerData(player);
+            if (data == null) return 0;
+            if (data.customizationData == null) data.customizationData = new CharacterCustomizationData();
+            var cd = data.customizationData;
+
+            HalloweenHatSnapshot snap;
+            if (!_halloweenHatSnapshots.TryGetValue(key, out snap))
+            {
+                snap = new HalloweenHatSnapshot { Player = player, FirstSeenAt = Time.time };
+                _halloweenHatSnapshots[key] = snap;
+            }
+            else if (snap.Player == null || snap.Player.ActorNumber != player.ActorNumber)
+            {
+                // 退出重进：改用新的玩家对象，并重置其「耸肩」状态（重进后应重新套用南瓜头）。
+                snap.Player = player;
+                _halloweenHatShowingOriginal.Remove(key);
+                _halloweenHatShrugCooldownUntil.Remove(key);
+                if (snap.Hat < 0)
+                {
+                    // 原帽仍未确定（例如上一次一直是南瓜头）：重新观察一段时间。
+                    snap.FirstSeenAt = Time.time;
+                    snap.Frozen = false;
+                }
+                else
+                {
+                    snap.Frozen = true;
+                }
+            }
+
+            if (!snap.Frozen)
+            {
+                // 观察窗口：先把客户端异步同步过来的真实帽子记下来，窗口结束前不改写。
+                if (cd.currentHat != HalloweenPumpkinHatId) snap.Hat = cd.currentHat;
+                if (Time.time < snap.FirstSeenAt + HalloweenHatRecordGraceSeconds) return 0;
+                snap.Frozen = true;
+            }
+
+            if (snap.Hat < 0)
+            {
+                // 观察时一直是南瓜头：视为原本就戴南瓜头（或装扮同步过晚）。
+                // 若之后客户端同步出非南瓜头值，再补记真实原帽并开始强制。
+                if (cd.currentHat == HalloweenPumpkinHatId) return 0;
+                snap.Hat = cd.currentHat;
+            }
+
+            if (cd.currentHat == HalloweenPumpkinHatId) return 0;
+
+            cd.currentHat = HalloweenPumpkinHatId;
+            cd.CorrectValues();
+            if (cd.currentHat != HalloweenPumpkinHatId)
+            {
+                // 帽子表长度不足时原版 CorrectValues 会把非法编号归 0：此时放弃，避免把玩家剃成「无帽」。
+                Plugin.Log.LogWarning(
+                    $"[RollOfTheScout] 万圣节：帽子编号 {HalloweenPumpkinHatId} 超出原版范围，已跳过 {player.NickName}。");
+                return 0;
+            }
+
+            service.SetPlayerData(player, data);
+            NotifyHalloweenHat(player, key);
+            return 1;
+        }
+
+        /// <summary>
+        /// 帽子被成功刷新为南瓜头时，向该玩家定向发送中英双语万圣节提示；
+        /// 同一名玩家在本次开启期间只提示一次（漂移复核 / 中途加入不会重复刷屏）。
+        /// </summary>
+        private void NotifyHalloweenHat(Photon.Realtime.Player player, string key)
+        {
+            if (player == null || string.IsNullOrEmpty(key)) return;
+            if (!_halloweenHatNotified.Add(key)) return;
+
+            const string text = "Happy Halloween!\n万圣节快乐！";
+            if (PhotonNetwork.LocalPlayer != null && player.ActorNumber == PhotonNetwork.LocalPlayer.ActorNumber)
+                PushLocalToast(text);   // 房主自己的角色：直接显示在本机屏幕上
+            else
+                ClassDisplayNet.BroadcastTargetedToast(player.ActorNumber, text);   // 仅该客机显示
+        }
+
+        /// <summary>玩家稳定标识：优先 Steam UserId（退出重进不变），缺失时退回 "#ActorNumber"。</summary>
+        private static string HalloweenKeyOf(Photon.Realtime.Player player)
+        {
+            if (player == null) return null;
+            return string.IsNullOrEmpty(player.UserId)
+                ? "#" + player.ActorNumber
+                : player.UserId;
+        }
+
+        /// <summary>关闭：把所有曾被改写的玩家恢复为各自原本的帽子，并清理记录。</summary>
+        private void RevertHalloweenHats()
+        {
+            var service = GameHandler.GetService<PersistentPlayerDataService>();
+            _halloweenHatActive = false;
+
+            if (service != null && _halloweenHatSnapshots.Count > 0)
+            {
+                int restored = 0;
+                foreach (var kv in _halloweenHatSnapshots)
+                {
+                    var snap = kv.Value;
+                    if (snap == null || snap.Player == null) continue;
+                    if (snap.Hat < 0) continue;   // 未记录到原帽（原本就是南瓜头）→ 无需还原
+                    if (!IsPlayerStillInRoom(snap.Player)) continue;
+
+                    var data = service.GetPlayerData(snap.Player);
+                    if (data == null) continue;
+                    if (data.customizationData == null) data.customizationData = new CharacterCustomizationData();
+                    if (data.customizationData.currentHat == snap.Hat) continue;
+
+                    data.customizationData.currentHat = snap.Hat;
+                    data.customizationData.CorrectValues();
+                    service.SetPlayerData(snap.Player, data);
+                    restored++;
+                }
+                Plugin.Log.LogInfo($"[RollOfTheScout] 万圣节：南瓜头已关闭，已恢复 {restored} 名玩家的原本头饰。");
+            }
+
+            SyncAvatarHatAfterHalloween();
+            ResetHalloweenHatSnapshots();
+        }
+
+        /// <summary>
+        /// 万圣节与待皓【化身】的帽子冲突收尾：化身期间由万圣节独占帽子（见 ApplyDaihaoAvatar 的 hat = -1），
+        /// 关闭时把化身快照里的原始帽子改回真实原帽，并让化身在下一帧重新计算期望值。
+        /// </summary>
+        private void SyncAvatarHatAfterHalloween()
+        {
+            if (_avatarOriginals.Count == 0 || _halloweenHatSnapshots.Count == 0) return;
+
+            foreach (var kv in _avatarOriginals)
+            {
+                var snap = kv.Value;
+                if (snap == null || snap.Player == null) continue;
+                string key = HalloweenKeyOf(snap.Player);
+                HalloweenHatSnapshot hs;
+                if (key == null || !_halloweenHatSnapshots.TryGetValue(key, out hs) || hs == null) continue;
+                if (hs.Hat < 0) continue;
+                if (snap.Data != null) snap.Data.currentHat = hs.Hat;
+                snap.Applied = null;   // 下次检测按当前装扮重新计算期望值
+            }
+
+            // 重新打开一次化身监控窗口，让仍是待皓的玩家按恢复后的原帽重新套用。
+            _avatarApplied.Clear();
+            _avatarNextCheck.Clear();
+        }
+
+        /// <summary>
+        /// 清理离场玩家记录：只清理无法跨局沿用的「#ActorNumber」兜底键；
+        /// Steam UserId 键保留（退出重进后仍能沿用同一份原始帽子）。
+        /// </summary>
+        private void PruneHalloweenHatEntries()
+        {
+            if (_halloweenHatSnapshots.Count > 0)
+            {
+                _halloweenHatStaleKeys.Clear();
+                foreach (var kv in _halloweenHatSnapshots)
+                {
+                    if (kv.Key.Length > 0 && kv.Key[0] == '#' && !_halloweenHatSeenKeys.Contains(kv.Key))
+                        _halloweenHatStaleKeys.Add(kv.Key);
+                }
+                for (int i = 0; i < _halloweenHatStaleKeys.Count; i++)
+                    _halloweenHatSnapshots.Remove(_halloweenHatStaleKeys[i]);
+            }
+
+            _halloweenHatStaleKeys.Clear();
+        }
+
+        /// <summary>该玩家是否仍在本房间（用于避免向已离开的玩家广播持久化数据）。</summary>
+        private static bool IsPlayerStillInRoom(Photon.Realtime.Player player)
+        {
+            if (player == null) return false;
+            return PhotonNetwork.CurrentRoom != null
+                && PhotonNetwork.CurrentRoom.Players != null
+                && PhotonNetwork.CurrentRoom.Players.ContainsKey(player.ActorNumber);
+        }
+
+        /// <summary>
+        /// 耸肩表情：在该玩家「原本帽子」与「南瓜头」之间切换。
+        /// 每名玩家 30 秒内置冷却；冷却期间连检测与判断都跳过（表情不做任何处理，也不会排队延迟生效）。
+        /// </summary>
+        private void OnHalloweenShrugEmote(Character character, string emoteName)
+        {
+            if (!_halloweenHatActive) return;
+            if (string.IsNullOrEmpty(emoteName)) return;
+            // 先做零分配的原版名精确匹配；只有非常规写法才回退到归一化比较（避免高频表情时每次分配 StringBuilder）。
+            if (!string.Equals(emoteName, EmoteShrug, System.StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(NormalizeEmoteName(emoteName), "shrug", System.StringComparison.OrdinalIgnoreCase))
+                return;
+            if (character == null || character.photonView == null || character.photonView.Owner == null) return;
+
+            string key = HalloweenKeyOf(character.photonView.Owner);
+            if (key == null) return;
+
+            // 冷却期内直接返回：不做字典查询后的任何判定，也不记录「待生效」。
+            if (_halloweenHatShrugCooldownUntil.TryGetValue(key, out float cooldownUntil)
+                && Time.time < cooldownUntil) return;
+
+            HalloweenHatSnapshot snap;
+            if (!_halloweenHatSnapshots.TryGetValue(key, out snap) || snap == null) return;
+
+            var service = GameHandler.GetService<PersistentPlayerDataService>();
+            if (service == null || snap.Player == null) return;
+
+            var data = service.GetPlayerData(snap.Player);
+            if (data == null) return;
+            if (data.customizationData == null) data.customizationData = new CharacterCustomizationData();
+            var cd = data.customizationData;
+
+            bool showingOriginal = _halloweenHatShowingOriginal.Contains(key);
+            int targetHat;
+            if (showingOriginal)
+            {
+                // 当前是原帽 → 切回南瓜头
+                targetHat = HalloweenPumpkinHatId;
+                _halloweenHatShowingOriginal.Remove(key);
+            }
+            else
+            {
+                // 当前是南瓜头 → 切回原帽（必须先记录过原帽）
+                if (snap.Hat < 0) return;
+                targetHat = snap.Hat;
+                _halloweenHatShowingOriginal.Add(key);
+            }
+
+            if (cd.currentHat != targetHat)
+            {
+                cd.currentHat = targetHat;
+                cd.CorrectValues();
+                service.SetPlayerData(snap.Player, data);
+            }
+
+            _halloweenHatShrugCooldownUntil[key] = Time.time + HalloweenHatShrugCooldownSeconds;
+
+            Plugin.Log.LogInfo(
+                $"[RollOfTheScout] 万圣节：{Nick(character)} 做了耸肩表情，头饰已切换为" +
+                (showingOriginal ? $"南瓜头（{HalloweenPumpkinHatId}）。" : $"原本帽子（{targetHat}）。"));
+        }
+
+        /// <summary>仅接受「非机器人、已绑定 Photon 玩家」的角色。</summary>
+        private static bool CanUseHalloweenHatTarget(Character c)
+        {
+            if (c == null || c.isBot) return false;
+            if (c.photonView == null || c.photonView.Owner == null) return false;
+            return true;
+        }
+
+        private void ResetHalloweenHatSnapshots()
+        {
+            _halloweenHatSnapshots.Clear();
+            _halloweenHatNotified.Clear();
+            _halloweenHatShowingOriginal.Clear();
+            _halloweenHatShrugCooldownUntil.Clear();
+            _halloweenHatSeenKeys.Clear();
+            _halloweenHatStaleKeys.Clear();
+        }
+
+        /// <summary>离开房间时重置运行状态（此时已无法还原，房间内的持久化数据由原版清空）。</summary>
+        private void ResetHalloweenHatState()
+        {
+            ResetHalloweenHatSnapshots();
+            _halloweenHatActive = false;
+            _halloweenHatLastDesired = false;
+            _halloweenHatNextToggleAt = 0f;
+            _halloweenHatNextCheck = 0f;
+        }
+
         /// <summary>
         /// 强制目标角色停止攀爬（墙面 / 绳索 / 藤蔓），以便其能正常播放跳舞动画。
         /// 原理：原版三种攀爬的停止逻辑均为 <c>[PunRPC]</c> 且无归属权校验，主机可代远端玩家触发。
@@ -9962,6 +12059,29 @@ namespace RollOfTheScout
                 if (ScoutCompanyTier(scout, radius) != tier) continue;
 
                 HostApi.ApplyStatus(scout, type, amount);
+            }
+        }
+
+        /// <summary>
+        /// 童军·【集体】**额外体力**档：每 <paramref name="interval"/> 秒给当前处于 <paramref name="tier"/> 档的童军
+        /// 增加 <paramref name="amount"/> 点额外体力（与「童军/领袖」饥饿档同节奏）。interval ≤ 0 或 amount == 0 视为关闭。
+        /// </summary>
+        private void FireScoutTierStamina(List<Character> characters, ref float timer, float interval, int tier, float radius,
+            float amount)
+        {
+            if (interval <= 0f || amount == 0f) return;
+
+            timer += Time.deltaTime;
+            if (timer < interval) return;
+            timer = 0f;
+
+            foreach (var scout in characters)
+            {
+                if (_ledger.GetClass(scout) != ClassType.Scout) continue;
+                if (IsDead(scout)) continue;
+                if (ScoutCompanyTier(scout, radius) != tier) continue;
+
+                HostApi.BoostExtraStamina(scout, amount);
             }
         }
 
@@ -10313,6 +12433,89 @@ namespace RollOfTheScout
             ClassDisplayNet.BroadcastTargetedToast(actor, text);
         }
 
+        /// <summary>
+        /// 捣蛋鬼·【捣蛋】的定向提示：**只给捣蛋鬼本人、受影响玩家本人，以及房主主机的屏幕**。
+        ///
+        /// · 主机本地始终显示一条（房主自己看得到全部发生了什么）；
+        /// · 再分别向捣蛋鬼与受影响玩家的 ActorNumber 发定向提示；
+        ///   `BroadcastTargetedToast` 走 `ReceiverGroup.Others`，因此「目标就是房主自己」时不会重复显示。
+        /// · 其余客机收到后按 ActorNumber 过滤，不显示。开关沿用「职业显示-网络同步」。
+        /// </summary>
+        private void ShowTricksterNotice(Character trickster, Character victim, string text)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            PushLocalToast(text);
+            BroadcastTargetedToastTo(trickster, text);
+            BroadcastTargetedToastTo(victim, text);
+        }
+
+        /// <summary>把提示定向发给该角色所属的客机（房主自己的角色不会被发送，由本地提示覆盖）。</summary>
+        private static void BroadcastTargetedToastTo(Character character, string text)
+        {
+            if (character == null || string.IsNullOrEmpty(text)) return;
+            var owner = character.photonView != null ? character.photonView.Owner : null;
+            if (owner == null || owner.ActorNumber <= 0) return;
+            ClassDisplayNet.BroadcastTargetedToast(owner.ActorNumber, text);
+        }
+
+        /// <summary>
+        /// 捣蛋提示里的「物品名」：英文用预制体原始名（糖果给更自然的英文名），
+        /// 中文优先从游戏本地化表按「简体中文」取真实译名，取不到再回退到当前语言的 <c>GetName()</c>。
+        /// </summary>
+        private static void TricksterItemNames(Item prefab, string prefabName, out string english, out string chinese)
+        {
+            if (string.Equals(prefabName, ItemNames.TrailMix, System.StringComparison.OrdinalIgnoreCase))
+            {
+                english = "mixed nuts";
+                chinese = "混合坚果";
+                return;
+            }
+            if (string.Equals(prefabName, ItemNames.Marshmallow, System.StringComparison.OrdinalIgnoreCase))
+            {
+                english = "marshmallow";
+                chinese = "棉花糖";
+                return;
+            }
+            if (string.Equals(prefabName, ItemNames.Lollipop, System.StringComparison.OrdinalIgnoreCase))
+            {
+                english = "big lollipop";
+                chinese = "大棒棒糖";
+                return;
+            }
+
+            // 其他物品：英文用预制体的原始名；中文向游戏本地化表请求「简体中文」名称。
+            // 原版 CSV 的键为 "NAME_<预制体名>"（见 Item.GetName 与 UI 文本索引的用法）。
+            english = prefab != null && prefab.UIData != null && !string.IsNullOrEmpty(prefab.UIData.itemName)
+                ? prefab.UIData.itemName
+                : prefabName;
+
+            chinese = null;
+            if (prefab != null && prefab.UIData != null && !string.IsNullOrEmpty(prefab.UIData.itemName))
+            {
+                try
+                {
+                    chinese = LocalizedText.GetText("NAME_" + prefab.UIData.itemName,
+                        LocalizedText.Language.SimplifiedChinese);
+                }
+                catch (System.Exception)
+                {
+                    chinese = null;
+                }
+            }
+
+            if (string.IsNullOrEmpty(chinese))
+            {
+                try
+                {
+                    chinese = prefab != null ? prefab.GetName() : prefabName;
+                }
+                catch (System.Exception)
+                {
+                    chinese = prefabName;
+                }
+            }
+        }
+
         /// <summary>只把提示放进本机（主机屏幕）的提示队列，不广播。</summary>
         private void PushLocalToast(string text)
         {
@@ -10589,17 +12792,29 @@ namespace RollOfTheScout
             if (pairs.Count == 0) return;
 
             ClassDisplayNet.BroadcastClassSnapshot(pairs);
+            // 职业名对照表很小，随每次快照一起发：即使下面的关键词 / 简介仍在节流，
+            // 旧版附属模组也能立刻把 31 / 32 从「None · 无职业」纠正为新职业名。
+            ClassDisplayNet.BroadcastClassNames(names);
 
-            // 职业名 / 关键词 / 简介都是**静态文本**（每个职业码一份）：不再每 2 秒随快照全量重发，
-            // 只在「出现过的职业集合变化」或每 ClassTextResendSeconds 秒补发一次（中途加入者仍能收到）。
+            // 关键词 / 简介较长：出现新职业、快照参与者 / 职业变化时立即重发，否则每 ClassTextResendSeconds 秒兜底。
             int textHash = 17;
+            int actorHash = 17;
             for (int i = 0; i < names.Count; i++) textHash = unchecked(textHash * 31 + names[i].Key);
-            if (textHash == _lastClassTextHash && Time.time < _nextClassTextTime) return;
+            for (int i = 0; i < pairs.Count; i++)
+            {
+                actorHash = unchecked(actorHash * 31 + pairs[i].Key);
+                actorHash = unchecked(actorHash * 31 + pairs[i].Value);
+            }
+
+            bool actorsChanged = actorHash != _lastSnapshotActorHash;
+            _lastSnapshotActorHash = actorHash;
+
+            // 名单 / 职业一变（中途加入、转职、复活）就立即重发关键词 / 简介：
+            // 旧版附属模组的本地文案表没有新职业码，只靠 10 秒保底重发仍会出现短暂「无介绍」。
+            if (!actorsChanged && textHash == _lastClassTextHash && Time.time < _nextClassTextTime) return;
 
             _lastClassTextHash = textHash;
             _nextClassTextTime = Time.time + ClassDisplayNet.ClassTextResendSeconds;
-
-            ClassDisplayNet.BroadcastClassNames(names);
 
             // 关键词 / 简介：文本较长，单独成表发送。主机文案表里没有的职业（理论上不会出现）自动跳过。
             var keywords = new List<KeyValuePair<int, string>>(names.Count);
@@ -11817,6 +14032,77 @@ namespace RollOfTheScout
             catch (System.Exception e)
             {
                 Plugin.Log.LogError($"[RollOfTheScout] 飞起来·读取物品标签时异常：{e.Message}");
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 石像鬼·【石化】的「可食用物品」判定（比 <see cref="IsFoodItem"/> 更全）：
+        /// ① 带 <c>Action_RestoreHunger</c>（回饥饿）或 <c>Action_Consume</c>（可食用动作）组件的物品；
+        /// ② 带 Berry / Mushroom / PackagedFood 标签；
+        /// ③ 烤过（<c>CookedAmount ≥ 1</c>）。
+        /// 前两项用于补足「目前只覆盖一部分」的食物：例如饮料、药剂等没有食物标签、但有食用动作的原版物品。
+        /// 仅用于石像鬼，避免改变野人 / 太空人等既有职业的判定口径。
+        /// </summary>
+        private static bool IsEdibleItem(Item item)
+        {
+            if (item == null) return false;
+            try
+            {
+                // 只认「真正能吃」的物品：恢复饥饿动作 / 食物标签 / 已烤制 / 芦荟。
+                // 不能把带 Action_Consume 的**可使用道具**（便携烤炉、魔豆、饮料等）也当成食物；
+                // 这类道具应当走各自的工具 / 拾取逻辑，而不是被【能量汲取】销毁或【石化】变成石头。
+                if (item.GetComponent<Action_RestoreHunger>() != null) return true;
+
+                // 芦荟（AloeVera）是治疗用可食用植物，没有恢复饥饿动作与食物标签，按名字显式纳入。
+                if (string.Equals(PrefabNameOf(item), "AloeVera", System.StringComparison.OrdinalIgnoreCase))
+                    return true;
+
+                var tags = item.itemTags;
+                if (tags.HasFlag(Item.ItemTags.Berry)
+                    || tags.HasFlag(Item.ItemTags.Mushroom)
+                    || tags.HasFlag(Item.ItemTags.PackagedFood)) return true;
+
+                var cooked = item.GetData<IntItemData>(DataEntryKey.CookedAmount);
+                if (cooked != null && cooked.Value >= 1) return true;
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogError($"[RollOfTheScout] 石化·读取可食用物品时异常：{e.Message}");
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 捣蛋鬼·拾取变糖的「可食用物品」判定（**只认真正的食物**，不认「可使用的道具」）：
+        /// ① 带 <c>Action_RestoreHunger</c>（吃下后恢复饥饿）组件；
+        /// ② 带 Berry（浆果）/ Mushroom（蘑菇）/ PackagedFood（包装食物）标签；
+        /// ③ 烤过（<c>CookedAmount ≥ 1</c>）。
+        ///
+        /// 与 <see cref="IsEdibleItem"/> 的关键区别：**刻意不接受通用的 <c>Action_Consume</c>**。
+        /// 那是原版「消耗 / 使用」动作（`Item.ConsumeDelayed`），除食物外也可能挂在
+        /// 诅咒头骨、骸骨之书、信号棒等**非食物**道具上；用它判定会把「可使用的道具」
+        /// 误判成「可食用物品」（例如把便携炉灶类道具换成糖果）。
+        /// 本方法只用于捣蛋鬼·拾取变糖，不改变石像鬼的既有判定口径。
+        /// </summary>
+        private static bool IsTricksterEdibleItem(Item item)
+        {
+            if (item == null) return false;
+            try
+            {
+                if (item.GetComponent<Action_RestoreHunger>() != null) return true;
+
+                var tags = item.itemTags;
+                if (tags.HasFlag(Item.ItemTags.Berry)
+                    || tags.HasFlag(Item.ItemTags.Mushroom)
+                    || tags.HasFlag(Item.ItemTags.PackagedFood)) return true;
+
+                var cooked = item.GetData<IntItemData>(DataEntryKey.CookedAmount);
+                if (cooked != null && cooked.Value >= 1) return true;
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogError($"[RollOfTheScout] 拾取变糖·读取可食用物品时异常：{e.Message}");
             }
             return false;
         }
@@ -13158,6 +15444,558 @@ namespace RollOfTheScout
             float sum = cur + amount;
             if (sum <= limit) return amount;
             return Mathf.Repeat(sum, limit) - cur;
+        }
+
+        // ===============================================================
+        // 混乱末影人（ChaosEnderman）：【混乱传送】/【混乱】/【末影】
+        // ===============================================================
+
+        /// <summary>状态值比较的容差：状态以 0.025 为最小步长，0.0001 足以滤掉浮点噪声。</summary>
+        private const float ChaosStatusEpsilon = 0.0001f;
+
+        /// <summary>默认参与轮换检测的状态（配置解析失败时的兜底）。</summary>
+        private static readonly CharacterAfflictions.STATUSTYPE[] ChaosDefaultStatusPool =
+        {
+            CharacterAfflictions.STATUSTYPE.Injury,
+            CharacterAfflictions.STATUSTYPE.Hot,
+            CharacterAfflictions.STATUSTYPE.Cold,
+            CharacterAfflictions.STATUSTYPE.Poison,
+            CharacterAfflictions.STATUSTYPE.Spores,
+            CharacterAfflictions.STATUSTYPE.Thorns,
+            CharacterAfflictions.STATUSTYPE.Drowsy,
+            CharacterAfflictions.STATUSTYPE.Curse,
+            CharacterAfflictions.STATUSTYPE.Petrify,
+            CharacterAfflictions.STATUSTYPE.Arrow,
+        };
+
+        /// <summary>
+        /// 混乱末影人·【混乱传送】/【末影】的周期驱动（每帧调用，内部按各玩家自己的计时器结算）。
+        ///
+        /// · 【混乱传送】每「混乱传送-检测间隔」秒：读取当前被检测状态，与上一次记录比较；
+        ///   有增加 → 与随机一名其他存活玩家互换位置；没有增加 → 获得 1 个曲迁菇。
+        ///   被检测状态每「混乱传送-状态轮换间隔」秒从「状态池」中**随机抽取**一种（尽量不重复上一种）。
+        /// · 【末影】每「末影-水体检测间隔」秒：处于水体（不含雪山 / 方山温泉）→ +损伤并传送到随机一名其他玩家处；
+        ///   物品栏 + 背包中的曲迁菇总数超过阈值 → +困倦。
+        /// </summary>
+        private void TickChaosEnderman(List<Character> characters)
+        {
+            if (!ModConfig.ChaosEnderman.Enabled.Value) return;
+            if (!_ledger.HasClassInRoom(ClassType.ChaosEnderman)) return;
+
+            float teleportInterval = Mathf.Max(0f, ModConfig.ChaosEnderman.TeleportIntervalSeconds.Value);
+            float rotateInterval = Mathf.Max(0f, ModConfig.ChaosEnderman.TeleportRotateSeconds.Value);
+            float waterInterval = Mathf.Max(0f, ModConfig.ChaosEnderman.EnderWaterIntervalSeconds.Value);
+
+            var pool = ChaosStatusPool();
+
+            foreach (var character in characters)
+            {
+                if (character == null || character.photonView == null) continue;
+                if (_ledger.GetClass(character) != ClassType.ChaosEnderman) continue;
+
+                string id = _ledger.IdOf(character);
+                if (string.IsNullOrEmpty(id)) continue;
+
+                if (!_chaosStates.TryGetValue(id, out var state))
+                {
+                    state = new ChaosEndermanState
+                    {
+                        NextTeleportCheckAt = Time.time + (teleportInterval > 0f ? teleportInterval : float.MaxValue),
+                        NextRotateAt = Time.time + (rotateInterval > 0f ? rotateInterval : float.MaxValue),
+                        NextWaterCheckAt = Time.time + (waterInterval > 0f ? waterInterval : float.MaxValue),
+                        StatusIndex = PickChaosStatusIndex(pool.Count, -1),
+                    };
+                    _chaosStates[id] = state;
+                }
+
+                if (IsDead(character))
+                {
+                    // 死亡期间不检测；复活后重新建立基线，避免把「死亡期间的变化」误判为本次增加。
+                    state.Baseline.Clear();
+                    continue;
+                }
+
+                // ---- 状态轮换：每 150 秒从状态池中**随机抽取**一种（尽量不重复上一种）----
+                if (pool.Count > 1 && rotateInterval > 0f && Time.time >= state.NextRotateAt)
+                {
+                    state.NextRotateAt = Time.time + rotateInterval;
+                    state.StatusIndex = PickChaosStatusIndex(pool.Count, state.StatusIndex);
+                    var rotated = pool[state.StatusIndex];
+                    Plugin.Log.LogInfo(
+                        $"[RollOfTheScout] 混乱传送：{Nick(character)} 改为检测 {rotated}（随机抽取）。");
+                    ShowToastTargeted(character,
+                        $"Chaos Enderman {ChaosDisplayName(character)} [Teleport] Checked status updated to: {ChaosStatusNameEn(rotated)}\n"
+                        + $"混沌末影人 {ChaosDisplayName(character)}【传送】检测状态更新为：{ChaosStatusNameZh(rotated)}");
+                }
+
+                // 状态池被配置改动后，旧下标可能越界：重新随机选一种。
+                if (state.StatusIndex < 0 || state.StatusIndex >= pool.Count)
+                    state.StatusIndex = PickChaosStatusIndex(pool.Count, -1);
+
+                // ---- 【混乱传送】检测 ----
+                if (teleportInterval > 0f && Time.time >= state.NextTeleportCheckAt)
+                {
+                    state.NextTeleportCheckAt = Time.time + teleportInterval;
+                    if (pool.Count == 0) continue;
+
+                    var type = pool[state.StatusIndex];
+                    ShowToastTargeted(character,
+                        $"Chaos Enderman {ChaosDisplayName(character)} [Teleport] Checked status this round: {ChaosStatusNameEn(type)}\n"
+                        + $"混沌末影人 {ChaosDisplayName(character)}【传送】本轮判定检测状态：{ChaosStatusNameZh(type)}");
+                    float current = GetChaosStatusValue(character, type);
+                    bool increased = state.Baseline.TryGetValue(type, out float previous)
+                                     && current > previous + ChaosStatusEpsilon;
+
+                    // 记录当前所有被检测状态的值，供下一次（含轮换后的下一次）比较。
+                    for (int i = 0; i < pool.Count; i++)
+                        state.Baseline[pool[i]] = GetChaosStatusValue(character, pool[i]);
+
+                    if (increased)
+                    {
+                        Plugin.Log.LogInfo(
+                            $"[RollOfTheScout] 混乱传送：{Nick(character)} 的 {type} 由 {previous:0.###} 上升到 {current:0.###}，触发位置互换。");
+                        ChaosSwapWithRandomPlayer(character);
+                    }
+                    else if (ModConfig.ChaosEnderman.TeleportGrantFungus.Value)
+                    {
+                        GrantChaosWarpFungus(character, "混乱传送");
+                    }
+                }
+
+                // ---- 【末影】水体 / 曲迁菇积攒检测 ----
+                if (waterInterval > 0f && Time.time >= state.NextWaterCheckAt)
+                {
+                    state.NextWaterCheckAt = Time.time + waterInterval;
+                    ChaosEndermanWaterCheck(character);
+                }
+            }
+        }
+
+        /// <summary>【混乱传送】判定为「增加」时：与随机一名其他存活玩家互换位置。</summary>
+        private void ChaosSwapWithRandomPlayer(Character self)
+        {
+            var candidates = new List<Character>();
+            foreach (var c in HostApi.GetActiveCharacters())
+            {
+                if (c == null || c == self || c.photonView == null) continue;
+                if (IsDead(c)) continue;
+                candidates.Add(c);
+            }
+
+            if (candidates.Count == 0)
+            {
+                Plugin.Log.LogInfo(
+                    $"[RollOfTheScout] 混乱传送：{Nick(self)} 触发互换，但场上没有其他存活玩家，本次不传送。");
+                return;
+            }
+
+            var other = candidates[Random.Range(0, candidates.Count)];
+            Vector3 selfPos = self.Center;
+            Vector3 otherPos = other.Center;
+            self.photonView.RPC("WarpPlayerRPC", RpcTarget.All, otherPos, true);
+            other.photonView.RPC("WarpPlayerRPC", RpcTarget.All, selfPos, true);
+            Plugin.Log.LogInfo($"[RollOfTheScout] 混乱传送：{Nick(self)} 与 {Nick(other)} 互换位置。");
+        }
+
+        /// <summary>【末影】把自身传送到随机一名其他存活玩家处（水体触发；雪山 / 方山温泉不计入）。</summary>
+        private void ChaosTeleportToRandomPlayer(Character self)
+        {
+            var candidates = new List<Character>();
+            foreach (var c in HostApi.GetActiveCharacters())
+            {
+                if (c == null || c == self || c.photonView == null) continue;
+                if (IsDead(c)) continue;
+                candidates.Add(c);
+            }
+            if (candidates.Count == 0)
+            {
+                Plugin.Log.LogInfo($"[RollOfTheScout] 末影：{Nick(self)} 处于水中，但场上没有其他存活玩家可传送。");
+                return;
+            }
+
+            var other = candidates[Random.Range(0, candidates.Count)];
+            self.photonView.RPC("WarpPlayerRPC", RpcTarget.All, other.Center, true);
+            Plugin.Log.LogInfo($"[RollOfTheScout] 末影：{Nick(self)} 处于水中，被传送到 {Nick(other)} 处。");
+        }
+
+        /// <summary>【末影】水体 / 曲迁菇积攒的周期结算。</summary>
+        private void ChaosEndermanWaterCheck(Character character)
+        {
+            if (IsChaosInWater(character))
+            {
+                float injury = ModConfig.ChaosEnderman.EnderWaterInjury.Value;
+                if (injury > 0f)
+                    HostApi.ApplyStatus(character, CharacterAfflictions.STATUSTYPE.Injury, injury);
+                if (ModConfig.ChaosEnderman.EnderWaterTeleport.Value)
+                    ChaosTeleportToRandomPlayer(character);
+                else
+                    Plugin.Log.LogInfo($"[RollOfTheScout] 末影：{Nick(character)} 处于水体，损伤 +{injury * 100f:0.#}。");
+            }
+
+            float drowsy = ModConfig.ChaosEnderman.EnderFungusDrowsy.Value;
+            if (drowsy <= 0f) return;
+
+            int threshold = ModConfig.ChaosEnderman.EnderFungusDrowsyThreshold.Value;
+            int count = CountChaosWarpFungus(character);
+            if (count <= threshold) return;
+
+            HostApi.ApplyStatus(character, CharacterAfflictions.STATUSTYPE.Drowsy, drowsy);
+            Plugin.Log.LogInfo(
+                $"[RollOfTheScout] 末影：{Nick(character)} 携带 {count} 个曲迁菇（>{threshold}），困倦 +{drowsy * 100f:0.#}。");
+        }
+
+        /// <summary>死亡回调：在尸体处生成 1 个曲迁菇。</summary>
+        private void SpawnChaosEndermanCorpseFungus(Character character)
+        {
+            if (!ModConfig.ChaosEnderman.EnderDeathFungus.Value) return;
+            string prefab = ModConfig.ChaosEnderman.WarpFungusItem.Value;
+            if (string.IsNullOrEmpty(prefab)) return;
+
+            var go = HostApi.SpawnItemAtFeet(character, prefab);
+            if (go == null)
+            {
+                Plugin.Log.LogWarning($"[RollOfTheScout] 末影：{Nick(character)} 死亡，但尸体处生成 {prefab} 失败。");
+                return;
+            }
+            Plugin.Log.LogInfo($"[RollOfTheScout] 末影：{Nick(character)} 死亡，尸体处生成 1 个 {prefab}。");
+        }
+
+        /// <summary>【混乱】拾取拦截（供 <see cref="Patches.ChaosEndermanPickupPatch"/> 调用）。返回 true 表示物品应直接消失。</summary>
+        public bool OnChaosEndermanPickup(Item item, Character character)
+        {
+            if (!_inRun) return false;
+            if (item == null || character == null) return false;
+            if (_ledger.GetClass(character) != ClassType.ChaosEnderman) return false;
+
+            float chance = Mathf.Clamp01(ModConfig.ChaosEnderman.ChaosPickupVanishChance.Value);
+            if (chance <= 0f) return false;
+
+            string name = PrefabNameOf(item);
+            if (IsChaosPickupBlacklisted(name)) return false;
+            if (UnityEngine.Random.value >= chance) return false;
+
+            GrantPandoraBox(character);
+            Plugin.Log.LogInfo(
+                $"[RollOfTheScout] 混乱：{Nick(character)} 拾取的 {name} 直接消失，并被强制使用一次潘多拉餐盒。");
+            return true;
+        }
+
+        /// <summary>
+        /// 【末影】食用「惩罚饮品」（默认运动饮料 Energy Drink / 万灵药 Cure-All）后 +损伤。
+        /// 调用来源两个（互为备份，去重窗口见 <see cref="ChaosEatDedupWindow"/>）：
+        /// <c>Item.Consume</c> 补丁 与 <c>GlobalEvents.OnItemConsumed</c>。
+        /// </summary>
+        public void OnChaosEndermanItemConsumed(Item item, Character character)
+        {
+            if (!_inRun) return;
+            if (item == null || character == null) return;
+            if (_ledger.GetClass(character) != ClassType.ChaosEnderman) return;
+
+            float injury = ModConfig.ChaosEnderman.EnderDrinkInjury.Value;
+            if (injury <= 0f) return;
+
+            string name = PrefabNameOf(item);
+            if (!IsChaosPenaltyDrink(name)) return;
+
+            string id = _ledger.IdOf(character);
+            if (!string.IsNullOrEmpty(id))
+            {
+                if (_chaosEatGuardUntil.TryGetValue(id, out float guardUntil) && Time.time < guardUntil) return;
+                _chaosEatGuardUntil[id] = Time.time + ChaosEatDedupWindow;
+            }
+
+            HostApi.ApplyStatus(character, CharacterAfflictions.STATUSTYPE.Injury, injury);
+            Plugin.Log.LogInfo(
+                $"[RollOfTheScout] 末影：{Nick(character)} 食用了 {name}，损伤 +{injury * 100f:0.#}。");
+        }
+
+        /// <summary>
+        /// 【末影】丢弃拦截（供 <see cref="Patches.ChaosEndermanDropClearPatch"/> 调用）。
+        ///
+        /// 原版所有「丢出 / 扔出」都会播放 <c>Item.RPC_SetThrownData(characterID, thrownAmount)</c>（RpcTarget.All），
+        /// 其中 <c>thrownAmount</c> 就是蓄力值（直接丢弃 = 0；蓄力扔出 &gt; 0）。
+        /// 主机据此可稳定区分两种行为（无需客机安装任何模组）：
+        /// · 直接丢弃曲迁菇 → 下一帧销毁该世界物品（被清除）；
+        /// · 蓄力扔出曲迁菇 → 原版行为，物品正常保留 / 生效。
+        /// </summary>
+        public void OnChaosEndermanItemDropped(Item item, Character character, float thrownAmount)
+        {
+            if (!_inRun || item == null || character == null) return;
+            if (_ledger.GetClass(character) != ClassType.ChaosEnderman) return;
+            // 蓄力扔出（原版阈值 > 0.1）→ 正常生效，不清理
+            if (thrownAmount > ChaosChargedThrowThreshold) return;
+            if (!TryGetChaosFungusId(out ushort itemId) || item.itemID != itemId) return;
+            if (item.photonView == null) return;
+
+            if (!_chaosPendingDropClears.Contains(item.photonView))
+                _chaosPendingDropClears.Add(item.photonView);
+            Plugin.Log.LogInfo(
+                $"[RollOfTheScout] 末影：{Nick(character)} 直接丢弃 1 个曲迁菇，将在下一帧清除。");
+        }
+
+        /// <summary>延迟到下一帧销毁「被直接丢弃」的曲迁菇，避免在 DropItemRpc 执行中途销毁导致后续 RPC 失效。</summary>
+        private void ProcessChaosPendingDropClears()
+        {
+            if (_chaosPendingDropClears.Count == 0) return;
+
+            for (int i = 0; i < _chaosPendingDropClears.Count; i++)
+            {
+                var view = _chaosPendingDropClears[i];
+                if (view == null || view.gameObject == null) continue;
+                PhotonNetwork.Destroy(view.gameObject);
+            }
+            _chaosPendingDropClears.Clear();
+        }
+
+        /// <summary>发放 1 个曲迁菇：只放入 3 个物品栏空位；物品栏已满时**不获得**（不再在脚下生成）。</summary>
+        private void GrantChaosWarpFungus(Character character, string reason)
+        {
+            string prefab = ModConfig.ChaosEnderman.WarpFungusItem.Value;
+            if (string.IsNullOrEmpty(prefab)) return;
+
+            if (HostApi.GiveItemToInventorySlots(character, prefab, out _))
+            {
+                Plugin.Log.LogInfo($"[RollOfTheScout] {reason}：{Nick(character)} 获得 1 个 {prefab}。");
+                return;
+            }
+
+            Plugin.Log.LogInfo($"[RollOfTheScout] {reason}：{Nick(character)} 物品栏已满，本次不获得 {prefab}。");
+        }
+
+        /// <summary>曲迁菇物品的 itemID（解析失败返回 false）。</summary>
+        private static bool TryGetChaosFungusId(out ushort itemId)
+        {
+            itemId = 0;
+            string prefab = ModConfig.ChaosEnderman.WarpFungusItem.Value;
+            if (string.IsNullOrEmpty(prefab)) return false;
+            if (!ItemDatabase.TryGetItem(prefab, out Item item) || item == null) return false;
+            itemId = item.itemID;
+            return true;
+        }
+
+        /// <summary>统计物品栏（3 格）+ 已装备背包内的曲迁菇总数。</summary>
+        private int CountChaosWarpFungus(Character character)
+        {
+            if (character == null || character.player == null) return 0;
+            if (!TryGetChaosFungusId(out ushort itemId)) return 0;
+
+            int count = 0;
+            var slots = character.player.itemSlots;
+            if (slots != null)
+            {
+                for (int i = 0; i < slots.Length; i++)
+                {
+                    var slot = slots[i];
+                    if (slot == null || slot.IsEmpty()) continue;
+                    if (slot.prefab != null && slot.prefab.itemID == itemId) count++;
+                }
+            }
+
+            var backpack = character.player.backpackSlot;
+            if (backpack != null && !backpack.IsEmpty() && backpack.data != null
+                && backpack.data.TryGetDataEntry<BackpackData>(DataEntryKey.BackpackData, out var data)
+                && data != null && data.itemSlots != null)
+            {
+                for (int i = 0; i < data.itemSlots.Length; i++)
+                {
+                    var slot = data.itemSlots[i];
+                    if (slot == null || slot.IsEmpty()) continue;
+                    if (slot.prefab != null && slot.prefab.itemID == itemId) count++;
+                }
+            }
+            return count;
+        }
+
+        /// <summary>【混乱传送】状态池：按配置解析（带缓存），无法识别的名字被跳过并只警告一次。</summary>
+        private List<CharacterAfflictions.STATUSTYPE> ChaosStatusPool()
+        {
+            string raw = ModConfig.ChaosEnderman.TeleportStatusPool.Value;
+            if (raw == _chaosStatusPoolRaw && _chaosStatusPool.Count > 0) return _chaosStatusPool;
+
+            _chaosStatusPoolRaw = raw;
+            _chaosStatusPool.Clear();
+
+            var invalid = new List<string>();
+            foreach (var name in WeightedPicker.ParseList(raw))
+            {
+                if (System.Enum.TryParse(name, true, out CharacterAfflictions.STATUSTYPE type)
+                    && System.Enum.IsDefined(typeof(CharacterAfflictions.STATUSTYPE), type))
+                {
+                    if (!_chaosStatusPool.Contains(type)) _chaosStatusPool.Add(type);
+                }
+                else
+                {
+                    invalid.Add(name);
+                }
+            }
+
+            if (invalid.Count > 0 && raw != _chaosStatusPoolWarnedRaw)
+            {
+                _chaosStatusPoolWarnedRaw = raw;
+                Plugin.Log.LogWarning(
+                    $"[RollOfTheScout] 混乱传送：状态池中有 {invalid.Count} 个无法识别的名字已跳过：{string.Join(", ", invalid)}");
+            }
+
+            if (_chaosStatusPool.Count == 0)
+            {
+                _chaosStatusPool.AddRange(ChaosDefaultStatusPool);
+                Plugin.Log.LogWarning("[RollOfTheScout] 混乱传送：状态池为空或全部无效，已退回默认 10 种状态。");
+            }
+            return _chaosStatusPool;
+        }
+
+        /// <summary>
+        /// 【混乱传送】从状态池中**随机抽取**一个下标；<paramref name="avoid"/> 有效时排除它（换一种），
+        /// 使结果在其余状态中等概率分布。
+        /// </summary>
+        private static int PickChaosStatusIndex(int count, int avoid)
+        {
+            if (count <= 0) return 0;
+            if (count == 1) return 0;
+            if (avoid < 0 || avoid >= count) return UnityEngine.Random.Range(0, count);
+
+            int index = UnityEngine.Random.Range(0, count - 1);
+            return index >= avoid ? index + 1 : index;
+        }
+
+        /// <summary>【传送】提示里显示的玩家名（优先 Photon 昵称，退化为角色名）。</summary>
+        private static string ChaosDisplayName(Character character)
+        {
+            if (character == null) return "?";
+            var owner = character.photonView != null ? character.photonView.Owner : null;
+            if (owner != null && !string.IsNullOrEmpty(owner.NickName)) return owner.NickName;
+            return string.IsNullOrEmpty(character.characterName) ? "?" : character.characterName;
+        }
+
+        /// <summary>检测状态的中文名（用于【传送】提示）。</summary>
+        private static string ChaosStatusNameZh(CharacterAfflictions.STATUSTYPE type)
+        {
+            switch (type)
+            {
+                case CharacterAfflictions.STATUSTYPE.Injury: return "损伤";
+                case CharacterAfflictions.STATUSTYPE.Hot: return "炎热";
+                case CharacterAfflictions.STATUSTYPE.Cold: return "寒冷";
+                case CharacterAfflictions.STATUSTYPE.Poison: return "中毒";
+                case CharacterAfflictions.STATUSTYPE.Spores: return "孢子";
+                case CharacterAfflictions.STATUSTYPE.Thorns: return "荆棘";
+                case CharacterAfflictions.STATUSTYPE.Drowsy: return "困倦";
+                case CharacterAfflictions.STATUSTYPE.Curse: return "诅咒";
+                case CharacterAfflictions.STATUSTYPE.Petrify: return "石化";
+                case CharacterAfflictions.STATUSTYPE.Arrow: return "箭";
+                default: return type.ToString();
+            }
+        }
+
+        /// <summary>检测状态的英文名（用于【传送】提示）。</summary>
+        private static string ChaosStatusNameEn(CharacterAfflictions.STATUSTYPE type)
+        {
+            switch (type)
+            {
+                case CharacterAfflictions.STATUSTYPE.Injury: return "Injury";
+                case CharacterAfflictions.STATUSTYPE.Hot: return "Hot";
+                case CharacterAfflictions.STATUSTYPE.Cold: return "Cold";
+                case CharacterAfflictions.STATUSTYPE.Poison: return "Poison";
+                case CharacterAfflictions.STATUSTYPE.Spores: return "Spores";
+                case CharacterAfflictions.STATUSTYPE.Thorns: return "Thorns";
+                case CharacterAfflictions.STATUSTYPE.Drowsy: return "Drowsy";
+                case CharacterAfflictions.STATUSTYPE.Curse: return "Curse";
+                case CharacterAfflictions.STATUSTYPE.Petrify: return "Petrify";
+                case CharacterAfflictions.STATUSTYPE.Arrow: return "Arrow";
+                default: return type.ToString();
+            }
+        }
+
+        /// <summary>
+        /// 是否为「雪山（Alpine）/ 方山（Mesa）」生物群系。
+        /// 这两个群系里的水只有温泉，按需求【末影】不把它们算作水体。
+        /// </summary>
+        private static bool IsChaosSpringBiome()
+        {
+            try
+            {
+                var map = Singleton<MapHandler>.Instance;
+                if (map == null) return false;
+                var biome = map.GetCurrentBiome();
+                return biome == Biome.BiomeType.Alpine || biome == Biome.BiomeType.Mesa;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>读取用于比较的状态值（石化按 0~1 归一化，与其它状态同量级）。</summary>
+        private static float GetChaosStatusValue(Character character, CharacterAfflictions.STATUSTYPE type)
+        {
+            if (type == CharacterAfflictions.STATUSTYPE.Petrify)
+                return HostApi.GetPetrify(character) / 100f;
+            return HostApi.GetStatus(character, type);
+        }
+
+        /// <summary>【混乱】拾取黑名单：命中则完全不受影响。</summary>
+        private bool IsChaosPickupBlacklisted(string prefabName)
+        {
+            return NameListContains(ModConfig.ChaosEnderman.ChaosPickupBlacklist.Value,
+                ref _chaosPickupBlacklistRaw, _chaosPickupBlacklist, prefabName);
+        }
+
+        /// <summary>【末影】是否为「惩罚饮品」。</summary>
+        private bool IsChaosPenaltyDrink(string prefabName)
+        {
+            return NameListContains(ModConfig.ChaosEnderman.EnderPenaltyDrinks.Value,
+                ref _chaosDrinksRaw, _chaosDrinks, prefabName);
+        }
+
+        /// <summary>刷新水体区域缓存（<see cref="WaterZone"/> 只来自场景实例，排除预制体资源）。</summary>
+        private void RefreshChaosWaterZones()
+        {
+            _chaosWaterZones.Clear();
+            var all = Resources.FindObjectsOfTypeAll<WaterZone>();
+            if (all == null) return;
+            for (int i = 0; i < all.Length; i++)
+            {
+                var zone = all[i];
+                if (zone == null || zone.gameObject == null) continue;
+                if (!zone.gameObject.scene.IsValid()) continue;   // 预制体资源
+                _chaosWaterZones.Add(zone);
+            }
+        }
+
+        /// <summary>
+        /// 是否处于水体：与原版 <see cref="WaterZone"/> 的判定同源 ——
+        /// 优先读该区域的 <c>trackedCharacters</c>（深水 / 浅水都算），再以 <c>zoneBounds</c>
+        /// 对角色中心与双脚做几何兜底（覆盖浅水）。
+        ///
+        /// ⚠ 雪山（Alpine）/ 方山（Mesa）的温泉按需求**不算水体**：这两个群系直接跳过。
+        /// </summary>
+        private bool IsChaosInWater(Character character)
+        {
+            if (character == null) return false;
+            if (IsChaosSpringBiome()) return false;
+
+            if (Time.time >= _chaosWaterZoneRefreshAt)
+            {
+                _chaosWaterZoneRefreshAt = Time.time + 5f;
+                RefreshChaosWaterZones();
+            }
+
+            for (int i = 0; i < _chaosWaterZones.Count; i++)
+            {
+                var zone = _chaosWaterZones[i];
+                if (zone == null || !zone.isActiveAndEnabled) continue;
+
+                var tracked = zone.trackedCharacters;
+                if (tracked != null && tracked.TryGetValue(character, out var state)
+                    && state != WaterZone.InWaterState.NONE)
+                    return true;
+
+                if (zone.zoneBounds.Contains(character.Center)) return true;
+                // 浅水体（温泉等）：原版按双脚判定，这里用角色根节点（脚部）与小腿高度做几何兜底。
+                Vector3 feet = character.transform.position;
+                if (zone.zoneBounds.Contains(feet)) return true;
+                if (zone.zoneBounds.Contains(feet + Vector3.up * 0.5f)) return true;
+            }
+            return false;
         }
 
     }

@@ -353,6 +353,30 @@ namespace RollOfTheScout
                 if (m <= 0) return int.MaxValue;
                 total += m;
             }
+            if (ModConfig.ChaosEnderman.Enabled.Value)
+            {
+                int m = MaxOf(ClassType.ChaosEnderman);
+                if (m <= 0) return int.MaxValue;
+                total += m;
+            }
+            if (ModConfig.Gargoyle.Enabled.Value)
+            {
+                int m = MaxOf(ClassType.Gargoyle);
+                if (m <= 0) return int.MaxValue;
+                total += m;
+            }
+            if (ModConfig.Alchemist.Enabled.Value)
+            {
+                int m = MaxOf(ClassType.Alchemist);
+                if (m <= 0) return int.MaxValue;
+                total += m;
+            }
+            if (ModConfig.Trickster.Enabled.Value)
+            {
+                int m = MaxOf(ClassType.Trickster);
+                if (m <= 0) return int.MaxValue;
+                total += m;
+            }
             return total;
         }
 
@@ -480,6 +504,10 @@ namespace RollOfTheScout
             if (ModConfig.Astronaut.Enabled.Value) list.Add(ClassType.Astronaut);
             if (ModConfig.Langwang.Enabled.Value) list.Add(ClassType.Langwang);
             if (ModConfig.Programmer.Enabled.Value) list.Add(ClassType.Programmer);
+            if (ModConfig.ChaosEnderman.Enabled.Value) list.Add(ClassType.ChaosEnderman);
+            if (ModConfig.Gargoyle.Enabled.Value) list.Add(ClassType.Gargoyle);
+            if (ModConfig.Alchemist.Enabled.Value) list.Add(ClassType.Alchemist);
+            if (ModConfig.Trickster.Enabled.Value) list.Add(ClassType.Trickster);
             return list;
         }
 
@@ -591,6 +619,10 @@ namespace RollOfTheScout
                 case ClassType.Astronaut: return Mathf.Max(0, ModConfig.Astronaut.Weight.Value);
                 case ClassType.Langwang: return Mathf.Max(0, ModConfig.Langwang.Weight.Value);
                 case ClassType.Programmer: return Mathf.Max(0, ModConfig.Programmer.Weight.Value);
+                case ClassType.ChaosEnderman: return Mathf.Max(0, ModConfig.ChaosEnderman.Weight.Value);
+                case ClassType.Gargoyle: return Mathf.Max(0, ModConfig.Gargoyle.Weight.Value);
+                case ClassType.Alchemist: return Mathf.Max(0, ModConfig.Alchemist.Weight.Value);
+                case ClassType.Trickster: return Mathf.Max(0, ModConfig.Trickster.Weight.Value);
                 default: return 0;
             }
         }
@@ -630,6 +662,10 @@ namespace RollOfTheScout
                 case ClassType.Astronaut: return Mathf.Max(0, ModConfig.Astronaut.MaxPlayers.Value);
                 case ClassType.Langwang: return Mathf.Max(0, ModConfig.Langwang.MaxPlayers.Value);
                 case ClassType.Programmer: return Mathf.Max(0, ModConfig.Programmer.MaxPlayers.Value);
+                case ClassType.ChaosEnderman: return Mathf.Max(0, ModConfig.ChaosEnderman.MaxPlayers.Value);
+                case ClassType.Gargoyle: return Mathf.Max(0, ModConfig.Gargoyle.MaxPlayers.Value);
+                case ClassType.Alchemist: return Mathf.Max(0, ModConfig.Alchemist.MaxPlayers.Value);
+                case ClassType.Trickster: return Mathf.Max(0, ModConfig.Trickster.MaxPlayers.Value);
                 default: return 0;
             }
         }
@@ -669,6 +705,10 @@ namespace RollOfTheScout
                 case ClassType.Astronaut: return Mathf.Max(0, ModConfig.Astronaut.MinPlayers.Value);
                 case ClassType.Langwang: return Mathf.Max(0, ModConfig.Langwang.MinPlayers.Value);
                 case ClassType.Programmer: return Mathf.Max(0, ModConfig.Programmer.MinPlayers.Value);
+                case ClassType.ChaosEnderman: return Mathf.Max(0, ModConfig.ChaosEnderman.MinPlayers.Value);
+                case ClassType.Gargoyle: return Mathf.Max(0, ModConfig.Gargoyle.MinPlayers.Value);
+                case ClassType.Alchemist: return Mathf.Max(0, ModConfig.Alchemist.MinPlayers.Value);
+                case ClassType.Trickster: return Mathf.Max(0, ModConfig.Trickster.MinPlayers.Value);
                 default: return 0;
             }
         }
@@ -707,6 +747,10 @@ namespace RollOfTheScout
                 case ClassType.Astronaut: return "太空人";
                 case ClassType.Langwang: return "榔王";
                 case ClassType.Programmer: return "程序员";
+                case ClassType.ChaosEnderman: return "混乱末影人";
+                case ClassType.Gargoyle: return "石像鬼";
+                case ClassType.Alchemist: return "炼金术士";
+                case ClassType.Trickster: return "捣蛋鬼";
                 default: return "无职业";
             }
         }
@@ -746,6 +790,10 @@ namespace RollOfTheScout
                 case ClassType.Astronaut: return "Astronaut";
                 case ClassType.Langwang: return "Langwang";
                 case ClassType.Programmer: return "Programmer";
+                case ClassType.ChaosEnderman: return "ChaosEnderman";
+                case ClassType.Gargoyle: return "Gargoyle";
+                case ClassType.Alchemist: return "Alchemist";
+                case ClassType.Trickster: return "Trickster";
                 default: return "None";
             }
         }

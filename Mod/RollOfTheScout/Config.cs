@@ -48,6 +48,10 @@ namespace RollOfTheScout
         public static AstronautConfig Astronaut { get; private set; } = new AstronautConfig();
         public static LangwangConfig Langwang { get; private set; } = new LangwangConfig();
         public static ProgrammerConfig Programmer { get; private set; } = new ProgrammerConfig();
+        public static ChaosEndermanConfig ChaosEnderman { get; private set; } = new ChaosEndermanConfig();
+        public static GargoyleConfig Gargoyle { get; private set; } = new GargoyleConfig();
+        public static AlchemistConfig Alchemist { get; private set; } = new AlchemistConfig();
+        public static TricksterConfig Trickster { get; private set; } = new TricksterConfig();
 
         /// <summary>本次实际使用的配置文件（= 插件自身的 Config；PEAKLib.ModConfig 据此枚举配置项）。</summary>
         internal static ConfigFile File { get; private set; }
@@ -97,6 +101,10 @@ namespace RollOfTheScout
             Astronaut.Initialize(config);
             Langwang.Initialize(config);
             Programmer.Initialize(config);
+            ChaosEnderman.Initialize(config);
+            Gargoyle.Initialize(config);
+            Alchemist.Initialize(config);
+            Trickster.Initialize(config);
 
             // 首次运行（或新增键）时立即落盘：确保 {GUID}.cfg 一定生成，ModConfig 才有文件可读。
             config.Save();
@@ -141,6 +149,7 @@ namespace RollOfTheScout
             public ConfigEntry<bool> NightHeatEnabled { get; private set; }
             public ConfigEntry<float> NightHeatIntervalSeconds { get; private set; }
             public ConfigEntry<float> NightHeatAmount { get; private set; }
+            public ConfigEntry<bool> HalloweenPumpkinHat { get; private set; }
 
             public void Initialize(ConfigFile config)
             {
@@ -218,6 +227,14 @@ namespace RollOfTheScout
                     "每次下发的「炎热」量（0.025 = 2.5 点）。\n" +
                     "默认 0.025：满夜时原版正好每 5 秒 +2.5 寒冷（0.005/秒），因此该默认值可完全抵消。\n" +
                     "若同时受其它寒冷来源影响，可适当调大。");
+                HalloweenPumpkinHat = BindL(config, "通用", "万圣节-南瓜头", false,
+                    "万圣节彩蛋：开启后，房间内所有玩家（含机场大厅、中途加入与退出重进的玩家）的头饰\n" +
+                    "会被强制换成南瓜头（帽子编号 27）；关闭后恢复为各自原本的头饰。\n" +
+                    "开启 / 关闭的切换有 60 秒内置冷却：冷却期间的修改会被**直接忽略**（不会排队到冷却结束后生效），\n" +
+                    "如冷却期间改过本项，请在冷却结束后再切换一次。\n" +
+                    "玩家做「耸肩」表情（A_Scout_Emote_Shrug）会在「原本帽子 / 南瓜头」之间切换；\n" +
+                    "每名玩家该切换有 30 秒内置冷却，冷却期间不做任何检测与判断，也不会延迟到冷却结束后生效。\n" +
+                    "仅在主机生效；默认 false（关闭）。");
             }
         }
 
@@ -794,6 +811,7 @@ namespace RollOfTheScout
             public ConfigEntry<float> AllyInjuryReduce { get; private set; }
             public ConfigEntry<float> AllyHungerIntervalSeconds { get; private set; }
             public ConfigEntry<float> AllyHungerReduce { get; private set; }
+            public ConfigEntry<float> AllyExtraStamina { get; private set; }
 
             public void Initialize(ConfigFile config)
             {
@@ -833,8 +851,8 @@ namespace RollOfTheScout
                     "若实测发不出来（日志会提示该名字未找到物品），请把这两项换成真实预制体名。");
 
                 // ---------------- 【集体】 ----------------
-                GroupRadius = BindL(config, "童军", "集体-半径", 15f,
-                    "【集体】判定「附近有其他玩家 / 童军或领袖」的半径（米）。默认 15。");
+                GroupRadius = BindL(config, "童军", "集体-半径", 25f,
+                    "【集体】判定「附近有其他玩家 / 童军或领袖」的半径（米）。默认 25。");
 
                 SoloIntervalSeconds = BindL(config, "童军", "集体-独自间隔", 20f,
                     "【集体·独自】半径内**没有其他玩家**时，每隔多少秒为童军叠加一次损伤与饥饿（秒）。默认 20。");
@@ -860,6 +878,8 @@ namespace RollOfTheScout
                     "【集体·童军/领袖】每隔多少秒减少一次饥饿（秒）。默认 30。");
                 AllyHungerReduce = BindL(config, "童军", "集体-童军减饥饿", 0.025f,
                     "【集体·童军/领袖】每次减少的饥饿（0.025 = 2.5 点）。设为 0 关闭该项。");
+                AllyExtraStamina = BindL(config, "童军", "集体-童军额外体力", 0.05f,
+                    "【集体·童军/领袖】每次结算饥饿时同时获得的额外体力（0.05 = 5 点）。默认 0.05。设为 0 关闭。");
             }
         }
 
@@ -1711,10 +1731,10 @@ namespace RollOfTheScout
                 // ---------------- 和平？ ----------------
                 InitCurseAmount = BindL(config, "和平主义者", "和平？-初始诅咒", 0.20f,
                     "【和平？】开局自动获得的诅咒（0.20 = 20 点）。默认 0.20。设为 0 关闭。");
-                HitStamina = BindL(config, "和平主义者", "和平？-踢中体力", 0.025f,
-                    "【和平？】踢中一名玩家时获得的额外体力（0.025 = 2.5 点）。默认 0.025。");
-                MissStamina = BindL(config, "和平主义者", "和平？-未中扣体力", 0.025f,
-                    "【和平？】踢人未踢中玩家时**扣除**的额外体力（0.025 = 2.5 点）。默认 0.025。");
+                HitStamina = BindL(config, "和平主义者", "和平？-踢中体力", 0.05f,
+                    "【和平？】踢中一名玩家时获得的额外体力（0.05 = 5 点）。默认 0.05。");
+                MissStamina = BindL(config, "和平主义者", "和平？-未中扣体力", 0.05f,
+                    "【和平？】踢人未踢中玩家时**扣除**的额外体力（0.05 = 5 点）。默认 0.05。");
                 MissDrowsy = BindL(config, "和平主义者", "和平？-未中困倦", 0.20f,
                     "【和平？】踢人未踢中玩家时增加的困倦（0.20 = 20 点）。默认 0.20。");
                 KickCooldown = BindL(config, "和平主义者", "和平？-踢人冷却", 0.7f,
@@ -2813,6 +2833,637 @@ namespace RollOfTheScout
                     "对一次性效果（发放物品 / 施加状态）只生效一次。设为 0 表示只生效一次、不续发。");
                 CheatCopyNotify = BindL(config, "程序员", "开挂-复制提示", true,
                     "【开挂·复制】成功复制到效果时是否在屏幕上显示提示（与法师效果提示同款 Toast）。默认 true。");
+            }
+        }
+
+        // ===============================================================
+        // 混乱末影人（ChaosEnderman）：【混乱传送】/【混乱】/【末影】
+        // ===============================================================
+        public class ChaosEndermanConfig
+        {
+            public ConfigEntry<bool> Enabled { get; private set; }
+            public ConfigEntry<int> MaxPlayers { get; private set; }
+            public ConfigEntry<int> MinPlayers { get; private set; }
+            public ConfigEntry<int> Weight { get; private set; }
+
+            // ---------------- 【混乱传送】：周期检测自身负面状态 → 易位 / 获得曲迁菇 ----------------
+            public ConfigEntry<float> TeleportIntervalSeconds { get; private set; }
+            public ConfigEntry<float> TeleportRotateSeconds { get; private set; }
+            public ConfigEntry<string> TeleportStatusPool { get; private set; }
+            public ConfigEntry<bool> TeleportGrantFungus { get; private set; }
+
+            // ---------------- 【混乱】：拾取物品概率消失并强制使用潘多拉餐盒 ----------------
+            public ConfigEntry<float> ChaosPickupVanishChance { get; private set; }
+            public ConfigEntry<string> ChaosPickupBlacklist { get; private set; }
+
+            // ---------------- 【末影】：惩罚饮品 / 死亡掉落 / 水体 / 曲迁菇积攒 ----------------
+            public ConfigEntry<string> EnderPenaltyDrinks { get; private set; }
+            public ConfigEntry<float> EnderDrinkInjury { get; private set; }
+            public ConfigEntry<bool> EnderDeathFungus { get; private set; }
+            public ConfigEntry<float> EnderWaterIntervalSeconds { get; private set; }
+            public ConfigEntry<float> EnderWaterInjury { get; private set; }
+            public ConfigEntry<bool> EnderWaterTeleport { get; private set; }
+            public ConfigEntry<int> EnderFungusDrowsyThreshold { get; private set; }
+            public ConfigEntry<float> EnderFungusDrowsy { get; private set; }
+
+            public ConfigEntry<string> WarpFungusItem { get; private set; }
+
+            public void Initialize(ConfigFile config)
+            {
+                Enabled = BindL(config, "混乱末影人", "启用职业", true, "是否启用混乱末影人职业。");
+                MaxPlayers = BindL(config, "混乱末影人", "最大人数", 1,
+                    "混乱末影人最多分配给几名玩家。设为 0 表示不限制。默认 1。");
+                MinPlayers = BindL(config, "混乱末影人", "最小人数", 0,
+                    "混乱末影人最少分配给几名玩家。人数不足时会优先补齐该职业。");
+                Weight = BindL(config, "混乱末影人", "抽取权重", 5,
+                    "随机分配时混乱末影人被抽中的权重。默认 5（负面代价较重，低于普通职业的 10）。");
+
+                // ---------------- 【混乱传送】 ----------------
+                TeleportIntervalSeconds = BindL(config, "混乱末影人", "混乱传送-检测间隔", 30f,
+                    "【混乱传送】每隔多少秒检测一次自身负面状态（秒）。默认 30。设为 0 关闭该检测。");
+                TeleportRotateSeconds = BindL(config, "混乱末影人", "混乱传送-状态轮换间隔", 150f,
+                    "【混乱传送】每隔多少秒从状态池中**随机换一种**被检测状态（秒）。默认 150。");
+                TeleportStatusPool = BindL(config, "混乱末影人", "混乱传送-状态池",
+                    "Injury,Hot,Cold,Poison,Spores,Thorns,Drowsy,Curse,Petrify,Arrow",
+                    "【混乱传送】参与轮换检测的负面状态（STATUSTYPE 名，英文逗号分隔）。\n" +
+                    "默认：损伤 / 炎热 / 寒冷 / 中毒 / 孢子 / 荆棘 / 困倦 / 诅咒 / 石化 / 箭。\n" +
+                    "每次轮换会从池中**随机抽取**一种（尽量不重复上一种）；无法识别的名字会被跳过（并在日志中提示一次）。");
+                TeleportGrantFungus = BindL(config, "混乱末影人", "混乱传送-未增加发放曲迁菇", true,
+                    "【混乱传送】检测时若该状态相比上次检测**没有增加**，是否获得 1 个曲迁菇。默认 true。\n" +
+                    "曲迁菇只放入 3 个物品栏空位；物品栏已满时**不获得**。\n" +
+                    "（首次检测因没有上次记录，按「没有增加」处理，也会尝试获得 1 个。）");
+
+                // ---------------- 【混乱】 ----------------
+                ChaosPickupVanishChance = BindL(config, "混乱末影人", "混乱-拾取消失概率", 0.5f,
+                    "【混乱】拾取物品时物品直接消失的概率（0.5 = 50%）。\n" +
+                    "命中时：物品消失，并强制对自身使用一次潘多拉餐盒。默认 0.50。设为 0 关闭。");
+                ChaosPickupBlacklist = BindL(config, "混乱末影人", "混乱-特殊物品黑名单",
+                    "Mushroom Glow,WarpFungus,PandorasBox,Flare,Strange Gem," +
+                    "Amulet_Healing,Amulet_SuperJump,Amulet_Clone,Amulet_InfiniteStamina,ScoutsHonor",
+                    "【混乱】拾取这些物品时不受影响（不会消失、也不会触发潘多拉餐盒），英文逗号分隔。\n" +
+                    "默认：诡异菇、曲迁菇、潘多拉餐盒、信号棒、奇怪水晶、童军的毅力 / 进取 / 盛情 / 野心、童军的荣耀。");
+
+                // ---------------- 【末影】 ----------------
+                EnderPenaltyDrinks = BindL(config, "混乱末影人", "末影-惩罚饮品", "Sports Drink,Cure-All",
+                    "【末影】食用这些饮品（预制体名，英文逗号分隔）后增加损伤。\n" +
+                    "默认 Sports Drink（运动饮料）/ Cure-All（万灵药）。");
+                EnderDrinkInjury = BindL(config, "混乱末影人", "末影-饮品损伤", 0.2f,
+                    "【末影】每次食用「末影-惩罚饮品」后增加的损伤（0.2 = 20 点）。默认 0.20。设为 0 关闭。");
+                EnderDeathFungus = BindL(config, "混乱末影人", "末影-死亡生成曲迁菇", true,
+                    "【末影】死亡时是否在尸体处生成 1 个曲迁菇。默认 true。");
+                EnderWaterIntervalSeconds = BindL(config, "混乱末影人", "末影-水体检测间隔", 5f,
+                    "【末影】每隔多少秒检测一次自身是否处于水体、以及曲迁菇数量（秒）。默认 5。\n" +
+                    "水体指海滩 / 森蕈 / 雾沼等实际水体；雪山 / 方山的温泉不计入。\n" +
+                    "设为 0 关闭水体检测与曲迁菇积攒检测。");
+                EnderWaterInjury = BindL(config, "混乱末影人", "末影-水中损伤", 0.10f,
+                    "【末影】检测时若自身处于水体，增加的损伤（0.10 = 10 点）。默认 0.10。设为 0 关闭。");
+                EnderWaterTeleport = BindL(config, "混乱末影人", "末影-水中传送", true,
+                    "【末影】检测时若自身处于水体，是否立即把自身传送到随机一名其他存活玩家处。默认 true。");
+                EnderFungusDrowsyThreshold = BindL(config, "混乱末影人", "末影-曲迁菇数量阈值", 1,
+                    "【末影】当自身物品栏 + 已装备背包中的曲迁菇总数**大于**该值时触发困倦。默认 1（即总数 ≥ 2 时触发）。");
+                EnderFungusDrowsy = BindL(config, "混乱末影人", "末影-曲迁菇困倦", 0.20f,
+                    "【末影】曲迁菇总数超过阈值时，每次检测增加的困倦（0.20 = 20 点）。默认 0.20。设为 0 关闭。");
+
+                WarpFungusItem = BindL(config, "混乱末影人", "曲迁菇物品", "WarpFungus",
+                    "「曲迁菇」的物品预制体名。用于发放、计数与死亡掉落。默认 WarpFungus。");
+            }
+        }
+
+        // ===============================================================
+        // 石像鬼（Gargoyle）：【石躯】/【石化】/【破壳】/【畏光】/【守护】
+        // ===============================================================
+        public class GargoyleConfig
+        {
+            public ConfigEntry<bool> Enabled { get; private set; }
+            public ConfigEntry<int> MaxPlayers { get; private set; }
+            public ConfigEntry<int> MinPlayers { get; private set; }
+            public ConfigEntry<int> Weight { get; private set; }
+
+            // ---------------- 【石躯】：静止蓄石化 / 达到阈值获得状态收益 ----------------
+            public ConfigEntry<float> InitialPetrify { get; private set; }
+            public ConfigEntry<float> MoveCheckIntervalSeconds { get; private set; }
+            public ConfigEntry<float> MoveThresholdMeters { get; private set; }
+            public ConfigEntry<int> StationaryPetrifyGain { get; private set; }
+            public ConfigEntry<int> PetrifyCap { get; private set; }
+            public ConfigEntry<int> MovingPetrifyLoss { get; private set; }
+            public ConfigEntry<float> StatusCheckIntervalSeconds { get; private set; }
+            public ConfigEntry<float> DrowsyThreshold { get; private set; }
+            public ConfigEntry<float> DrowsyReduce { get; private set; }
+            public ConfigEntry<float> StaminaThreshold { get; private set; }
+            public ConfigEntry<float> StaminaGain { get; private set; }
+            public ConfigEntry<float> PoisonReduce { get; private set; }
+            public ConfigEntry<float> SporesReduce { get; private set; }
+            public ConfigEntry<float> HungerThreshold { get; private set; }
+            public ConfigEntry<float> HungerReduce { get; private set; }
+            public ConfigEntry<float> ColdReduce { get; private set; }
+            public ConfigEntry<float> HotReduce { get; private set; }
+            public ConfigEntry<float> InvincibleThreshold { get; private set; }
+            public ConfigEntry<bool> InvincibleEnabled { get; private set; }
+
+            // ---------------- 【石化】：食物变石头 / 拾取石头的随机结果 ----------------
+            public ConfigEntry<int> FoodPetrifyThreshold { get; private set; }
+            public ConfigEntry<string> FoodToStoneItem { get; private set; }
+            public ConfigEntry<string> FoodExemptItems { get; private set; }
+            public ConfigEntry<string> StoneItem { get; private set; }
+            public ConfigEntry<string> StatueItem { get; private set; }
+            public ConfigEntry<float> StoneNoChangeChance { get; private set; }
+            public ConfigEntry<float> StonePetrifyStaminaChance { get; private set; }
+            public ConfigEntry<int> StonePetrifyGain { get; private set; }
+            public ConfigEntry<float> StoneInjuryReduce { get; private set; }
+            public ConfigEntry<float> StoneStaminaGain { get; private set; }
+            public ConfigEntry<float> StoneHungerSprintChance { get; private set; }
+            public ConfigEntry<float> StoneHungerReduce { get; private set; }
+            public ConfigEntry<bool> StoneSprintEnabled { get; private set; }
+            public ConfigEntry<float> StoneCleanseChance { get; private set; }
+            public ConfigEntry<bool> StoneCleanseInvincible { get; private set; }
+            public ConfigEntry<float> StoneStatueChance { get; private set; }
+            public ConfigEntry<int> StoneStatueLowThreshold { get; private set; }
+            public ConfigEntry<int> StoneStatueHighThreshold { get; private set; }
+            public ConfigEntry<float> StoneStatueCurse { get; private set; }
+            public ConfigEntry<int> StoneStatuePetrifyClear { get; private set; }
+
+            // ---------------- 【破壳】：高石化一次性爆发 ----------------
+            public ConfigEntry<float> ShellIntervalSeconds { get; private set; }
+            public ConfigEntry<float> ShellCooldownSeconds { get; private set; }
+            public ConfigEntry<int> ShellPetrifyThreshold { get; private set; }
+            public ConfigEntry<int> ShellPetrifyClear { get; private set; }
+            public ConfigEntry<float> ShellRadius { get; private set; }
+            public ConfigEntry<float> ShellDrowsyReduce { get; private set; }
+            public ConfigEntry<float> ShellStaminaGain { get; private set; }
+            public ConfigEntry<bool> ShellInvincible { get; private set; }
+            public ConfigEntry<bool> ShellSprint { get; private set; }
+            public ConfigEntry<bool> ShellInfiniteStamina { get; private set; }
+
+            // ---------------- 【畏光】：白天叠困倦 / 困倦高时叠石化 ----------------
+            public ConfigEntry<float> LightIntervalSeconds { get; private set; }
+            public ConfigEntry<int> LightLowPetrifyThreshold { get; private set; }
+            public ConfigEntry<float> LightDayDrowsy { get; private set; }
+            public ConfigEntry<float> LightDrowsyThreshold { get; private set; }
+            public ConfigEntry<float> LightDrowsyInjury { get; private set; }
+            public ConfigEntry<int> LightDrowsyPetrify { get; private set; }
+
+            // ---------------- 【守护】：高石化时范围减伤 + 无敌 ----------------
+            public ConfigEntry<float> GuardIntervalSeconds { get; private set; }
+            public ConfigEntry<int> GuardPetrifyThreshold { get; private set; }
+            public ConfigEntry<float> GuardRadius { get; private set; }
+            public ConfigEntry<float> GuardInjuryReduce { get; private set; }
+            public ConfigEntry<bool> GuardInvincible { get; private set; }
+
+            public void Initialize(ConfigFile config)
+            {
+                Enabled = BindL(config, "石像鬼", "启用职业", true, "是否启用石像鬼职业。");
+                MaxPlayers = BindL(config, "石像鬼", "最大人数", 1,
+                    "石像鬼最多分配给几名玩家。设为 0 表示不限制。默认 1。");
+                MinPlayers = BindL(config, "石像鬼", "最小人数", 0,
+                    "石像鬼最少分配给几名玩家。人数不足时会优先补齐该职业。");
+                Weight = BindL(config, "石像鬼", "抽取权重", 5,
+                    "随机分配时石像鬼被抽中的权重。默认 5（需要长期站桩，负面代价较重）。");
+
+                // ---------------- 【石躯】 ----------------
+                InitialPetrify = BindL(config, "石像鬼", "石躯-初始石化", 0.40f,
+                    "【石躯】开局初始自带的石化值（0.40 = 40 点）。默认 0.40。");
+                MoveCheckIntervalSeconds = BindL(config, "石像鬼", "石躯-位移检测间隔", 5f,
+                    "【石躯】每隔多少秒记录并检测一次位置（秒）。默认 5。设为 0 关闭位移检测。");
+                MoveThresholdMeters = BindL(config, "石像鬼", "石躯-静止位移阈值", 1.0f,
+                    "【石躯】两次检测之间位移小于该值（米）视为「静止」。默认 1.0。");
+                StationaryPetrifyGain = BindL(config, "石像鬼", "石躯-静止石化增加", 5,
+                    "【石躯】判定为静止时，每次检测增加的石化值（百分比整数）。默认 5。");
+                PetrifyCap = BindL(config, "石像鬼", "石躯-石化上限", 80,
+                    "【石躯】站立增加的石化上限：达到该值后不再因静止而增加。默认 80。");
+                MovingPetrifyLoss = BindL(config, "石像鬼", "石躯-移动石化减少", 1,
+                    "【石躯】判定为移动时，每次检测减少的石化值（百分比整数）。默认 1。");
+                StatusCheckIntervalSeconds = BindL(config, "石像鬼", "石躯-状态检测间隔", 10f,
+                    "【石躯】每隔多少秒按石化值结算一次状态收益（秒）。默认 10。设为 0 关闭。");
+                DrowsyThreshold = BindL(config, "石像鬼", "石躯-困倦阈值", 0.30f,
+                    "【石躯】石化达到该值时，开始削减困倦（0.30 = 30 点）。默认 0.30。");
+                DrowsyReduce = BindL(config, "石像鬼", "石躯-困倦削减", 0.25f,
+                    "【石躯】每次状态检测削减的困倦（0.25 = 25 点）。默认 0.25。");
+                StaminaThreshold = BindL(config, "石像鬼", "石躯-额外体力阈值", 0.50f,
+                    "【石躯】石化达到该值时，额外获得体力 / 削减中毒与孢子（0.50 = 50 点）。默认 0.50。");
+                StaminaGain = BindL(config, "石像鬼", "石躯-额外体力", 5f,
+                    "【石躯】每次状态检测增加的额外体力。默认 5。");
+                PoisonReduce = BindL(config, "石像鬼", "石躯-中毒削减", 0.30f,
+                    "【石躯】每次状态检测削减的中毒（0.30 = 30 点）。默认 0.30。");
+                SporesReduce = BindL(config, "石像鬼", "石躯-孢子削减", 0.30f,
+                    "【石躯】每次状态检测削减的孢子（0.30 = 30 点）。默认 0.30。");
+                HungerThreshold = BindL(config, "石像鬼", "石躯-饥饿阈值", 0.70f,
+                    "【石躯】石化达到该值时，额外削减饥饿 / 寒冷 / 炎热（0.70 = 70 点）。默认 0.70。");
+                HungerReduce = BindL(config, "石像鬼", "石躯-饥饿削减", 0.025f,
+                    "【石躯】每次状态检测削减的饥饿（0.025 = 2.5 点）。默认 0.025。");
+                ColdReduce = BindL(config, "石像鬼", "石躯-寒冷削减", 0.50f,
+                    "【石躯】每次状态检测削减的寒冷（0.50 = 50 点）。默认 0.50。");
+                HotReduce = BindL(config, "石像鬼", "石躯-炎热削减", 0.50f,
+                    "【石躯】每次状态检测削减的炎热（0.50 = 50 点）。默认 0.50。");
+                InvincibleThreshold = BindL(config, "石像鬼", "石躯-无敌阈值", 0.80f,
+                    "【石躯】石化达到该值时，每次状态检测获得一次无敌（0.80 = 80 点）。默认 0.80。");
+                InvincibleEnabled = BindL(config, "石像鬼", "石躯-无敌启用", true,
+                    "【石躯】是否启用「石化 ≥ 阈值时获得无敌」。默认 true。");
+
+                // ---------------- 【石化】 ----------------
+                FoodPetrifyThreshold = BindL(config, "石像鬼", "石化-食物石化阈值", 30,
+                    "【石化】自身石化达到该值时，拾取可食用物品会被变成石头（百分比整数）。默认 30。");
+                FoodToStoneItem = BindL(config, "石像鬼", "石化-食物变石物品", "Stone",
+                    "【石化】可食用物品被转化成的物品预制体名。默认 Stone（石头）。");
+                FoodExemptItems = BindL(config, "石像鬼", "石化-食物豁免物品", "Mushroom Glow,Cure-All,PandorasBox",
+                    "【石化】这些可食用物品即使达到阈值也不会变成石头（英文逗号分隔）。\n" +
+                    "默认：诡异菇 Mushroom Glow、万灵药 Cure-All、潘多拉餐盒 PandorasBox。");
+                StoneItem = BindL(config, "石像鬼", "石化-石头物品", "Stone",
+                    "【石化】触发随机判定的「石头」物品预制体名。默认 Stone。");
+                StatueItem = BindL(config, "石像鬼", "石化-雕像物品", "ScoutEffigy",
+                    "【石化】2.5% 分支把石头变成的物品预制体名。默认 ScoutEffigy（童军雕像）。");
+                StoneNoChangeChance = BindL(config, "石像鬼", "石化-石头-无变化概率", 0.30f,
+                    "【石化】拾取石头时「无变化」的概率。默认 0.30。");
+                StonePetrifyStaminaChance = BindL(config, "石像鬼", "石化-石头-石化回体概率", 0.30f,
+                    "【石化】拾取石头时「+石化 / -损伤 / +额外体力」的概率。默认 0.30。");
+                StonePetrifyGain = BindL(config, "石像鬼", "石化-石头-石化回体-石化", 5,
+                    "【石化】该分支增加的石化值（百分比整数）。默认 5。");
+                StoneInjuryReduce = BindL(config, "石像鬼", "石化-石头-石化回体-损伤", 0.05f,
+                    "【石化】该分支削减的损伤（0.05 = 5 点）。默认 0.05。");
+                StoneStaminaGain = BindL(config, "石像鬼", "石化-石头-石化回体-体力", 10f,
+                    "【石化】该分支增加的额外体力。默认 10。");
+                StoneHungerSprintChance = BindL(config, "石像鬼", "石化-石头-解饿加速概率", 0.30f,
+                    "【石化】拾取石头时「-饥饿 / 获得一次加速」的概率。默认 0.30。");
+                StoneHungerReduce = BindL(config, "石像鬼", "石化-石头-解饿加速-饥饿", 0.10f,
+                    "【石化】该分支削减的饥饿（0.10 = 10 点）。默认 0.10。");
+                StoneSprintEnabled = BindL(config, "石像鬼", "石化-石头-解饿加速-加速", true,
+                    "【石化】该分支是否给予一次加速（结束不清除困倦）。默认 true。");
+                StoneCleanseChance = BindL(config, "石像鬼", "石化-石头-清负概率", 0.075f,
+                    "【石化】拾取石头时「清除负面（诅咒与石化除外）+ 获得一次无敌」的概率。默认 0.075。");
+                StoneCleanseInvincible = BindL(config, "石像鬼", "石化-石头-清负-无敌", true,
+                    "【石化】清负分支是否额外给予一次无敌。默认 true。");
+                StoneStatueChance = BindL(config, "石像鬼", "石化-石头-雕像概率", 0.025f,
+                    "【石化】拾取石头时触发「化成童军雕像」特殊判定的概率。默认 0.025。");
+                StoneStatueLowThreshold = BindL(config, "石像鬼", "石化-石头-雕像-低档阈值", 50,
+                    "【石化】雕像判定的低档石化阈值：≥该值但 < 高档阈值时，额外 +诅咒。默认 50。");
+                StoneStatueHighThreshold = BindL(config, "石像鬼", "石化-石头-雕像-高档阈值", 70,
+                    "【石化】雕像判定的高档石化阈值：≥该值时不加诅咒。默认 70。");
+                StoneStatueCurse = BindL(config, "石像鬼", "石化-石头-雕像-诅咒", 0.05f,
+                    "【石化】低档雕像分支增加的诅咒（0.05 = 5 点）。默认 0.05。");
+                StoneStatuePetrifyClear = BindL(config, "石像鬼", "石化-石头-雕像-清空石化", 100,
+                    "【石化】雕像分支清空的石化值（100 = 清零）。默认 100。");
+
+                // ---------------- 【破壳】 ----------------
+                ShellIntervalSeconds = BindL(config, "石像鬼", "破壳-间隔", 20f,
+                    "【破壳】每隔多少秒检测一次（秒）。默认 20。设为 0 关闭。");
+                ShellCooldownSeconds = BindL(config, "石像鬼", "破壳-冷却", 180f,
+                    "【破壳】每次成功触发后的冷却时长（秒）。冷却期间不再检测石化，也不会再次触发。默认 180。");
+                ShellPetrifyThreshold = BindL(config, "石像鬼", "破壳-石化阈值", 80,
+                    "【破壳】石化必须大于该值才触发（百分比整数）。默认 80（即 >80）。");
+                ShellPetrifyClear = BindL(config, "石像鬼", "破壳-清空石化", 100,
+                    "【破壳】触发时清空的石化值（100 = 清零）。默认 100。");
+                ShellRadius = BindL(config, "石像鬼", "破壳-半径", 15f,
+                    "【破壳】效果半径（米），含自己。默认 15。");
+                ShellDrowsyReduce = BindL(config, "石像鬼", "破壳-困倦削减", 1.00f,
+                    "【破壳】为半径内所有玩家削减的困倦（1.00 = 100 点）。默认 1.00。");
+                ShellStaminaGain = BindL(config, "石像鬼", "破壳-额外体力", 20f,
+                    "【破壳】为半径内所有玩家增加的额外体力。默认 20。");
+                ShellInvincible = BindL(config, "石像鬼", "破壳-无敌", true,
+                    "【破壳】触发时是否给自身一次无敌。默认 true。");
+                ShellSprint = BindL(config, "石像鬼", "破壳-加速", true,
+                    "【破壳】触发时是否给自身一次加速。默认 true。");
+                ShellInfiniteStamina = BindL(config, "石像鬼", "破壳-无限体力", true,
+                    "【破壳】触发时是否给自身一次无限体力。默认 true。");
+
+                // ---------------- 【畏光】 ----------------
+                LightIntervalSeconds = BindL(config, "石像鬼", "畏光-间隔", 10f,
+                    "【畏光】每隔多少秒检测一次白天与困倦（秒）。默认 10。设为 0 关闭。");
+                LightLowPetrifyThreshold = BindL(config, "石像鬼", "畏光-低石化阈值", 30,
+                    "【畏光】仅当自身石化低于该值时才在白天叠加困倦（百分比整数）。默认 30。");
+                LightDayDrowsy = BindL(config, "石像鬼", "畏光-白天困倦", 0.15f,
+                    "【畏光】白天且石化低于阈值时，每次检测增加的困倦（0.15 = 15 点）。默认 0.15。");
+                LightDrowsyThreshold = BindL(config, "石像鬼", "畏光-困倦阈值", 0.50f,
+                    "【畏光】困倦达到该值时，额外增加损伤与石化（0.50 = 50 点）。默认 0.50。");
+                LightDrowsyInjury = BindL(config, "石像鬼", "畏光-困倦损伤", 0.025f,
+                    "【畏光】困倦达到阈值时增加的损伤（0.025 = 2.5 点）。默认 0.025。");
+                LightDrowsyPetrify = BindL(config, "石像鬼", "畏光-困倦石化", 10,
+                    "【畏光】困倦达到阈值时增加的石化值（百分比整数）。默认 10。");
+
+                // ---------------- 【守护】 ----------------
+                GuardIntervalSeconds = BindL(config, "石像鬼", "守护-间隔", 60f,
+                    "【守护】每隔多少秒检测一次（秒）。默认 60。设为 0 关闭。");
+                GuardPetrifyThreshold = BindL(config, "石像鬼", "守护-石化阈值", 60,
+                    "【守护】自身石化达到该值时触发（百分比整数）。默认 60。");
+                GuardRadius = BindL(config, "石像鬼", "守护-半径", 20f,
+                    "【守护】作用半径（米），不含自己。默认 20。");
+                GuardInjuryReduce = BindL(config, "石像鬼", "守护-损伤削减", 0.05f,
+                    "【守护】为半径内其他玩家削减的损伤（0.05 = 5 点）。默认 0.05。");
+                GuardInvincible = BindL(config, "石像鬼", "守护-无敌", true,
+                    "【守护】是否给半径内其他玩家各一次无敌。默认 true。");
+            }
+        }
+
+        // ===============================================================
+        // 炼金术士（Alchemist）：【等价交换】/【能量汲取】/【贤者之石】/【禁忌炼成】
+        // ===============================================================
+        public class AlchemistConfig
+        {
+            public ConfigEntry<bool> Enabled { get; private set; }
+            public ConfigEntry<int> MaxPlayers { get; private set; }
+            public ConfigEntry<int> MinPlayers { get; private set; }
+            public ConfigEntry<int> Weight { get; private set; }
+
+            // ---------------- 【等价交换】：工具拾取 → 随机负面 + 随机转化 ----------------
+            public ConfigEntry<float> EquivCooldownSeconds { get; private set; }
+            public ConfigEntry<string> EquivToolItems { get; private set; }
+            public ConfigEntry<string> EquivStatusPool { get; private set; }
+            public ConfigEntry<float> EquivStatusAmount { get; private set; }
+
+            public ConfigEntry<float> ConvertStoneStickChance { get; private set; }
+            public ConfigEntry<string> ConvertStoneStickItems { get; private set; }
+            public ConfigEntry<float> ConvertRootBeanChance { get; private set; }
+            public ConfigEntry<string> ConvertRootBeanItems { get; private set; }
+            public ConfigEntry<float> ConvertRopeDrinkChance { get; private set; }
+            public ConfigEntry<string> ConvertRopeDrinkItems { get; private set; }
+            public ConfigEntry<float> ConvertClimbToolChance { get; private set; }
+            public ConfigEntry<string> ConvertClimbToolItems { get; private set; }
+            public ConfigEntry<float> ConvertBalloonChance { get; private set; }
+            public ConfigEntry<string> ConvertBalloonItems { get; private set; }
+            public ConfigEntry<float> ConvertAntiGravityChance { get; private set; }
+            public ConfigEntry<string> ConvertAntiGravityItems { get; private set; }
+            public ConfigEntry<float> ConvertPandoraChance { get; private set; }
+            public ConfigEntry<string> ConvertPandoraItems { get; private set; }
+            public ConfigEntry<float> ConvertExplosiveChance { get; private set; }
+            public ConfigEntry<string> ConvertExplosiveItems { get; private set; }
+            public ConfigEntry<float> ConvertStatueChance { get; private set; }
+            public ConfigEntry<string> ConvertStatueItems { get; private set; }
+            public ConfigEntry<float> ConvertDollChance { get; private set; }
+            public ConfigEntry<string> ConvertDollItems { get; private set; }
+
+            // ---------------- 【能量汲取】：可食用物品销毁 → 削减负面 + 额外体力；每 N 次额外奖励 ----------------
+            public ConfigEntry<string> DrainExemptItems { get; private set; }
+            public ConfigEntry<string> DrainExtraEdibleItems { get; private set; }
+            public ConfigEntry<float> DrainCooldownSeconds { get; private set; }
+            public ConfigEntry<float> DrainStatusReduce { get; private set; }
+            public ConfigEntry<int> DrainPetrifyReduce { get; private set; }
+            public ConfigEntry<float> DrainStamina { get; private set; }
+            public ConfigEntry<int> DrainRewardEvery { get; private set; }
+            public ConfigEntry<float> DrainPandoraChance { get; private set; }
+            public ConfigEntry<string> DrainPandoraItem { get; private set; }
+            public ConfigEntry<float> DrainCureAllChance { get; private set; }
+            public ConfigEntry<string> DrainCureAllItem { get; private set; }
+            public ConfigEntry<float> DrainDynamiteChance { get; private set; }
+            public ConfigEntry<string> DrainDynamiteItem { get; private set; }
+
+            // ---------------- 【贤者之石】：每收集 N 个石头触发一次特殊炼制 ----------------
+            public ConfigEntry<int> SageThreshold { get; private set; }
+            public ConfigEntry<float> SageStatueChance { get; private set; }
+            public ConfigEntry<string> SageStatueItem { get; private set; }
+            public ConfigEntry<float> SageDollChance { get; private set; }
+            public ConfigEntry<string> SageDollItem { get; private set; }
+            public ConfigEntry<float> SageGemChance { get; private set; }
+            public ConfigEntry<string> SageGemItems { get; private set; }
+            public ConfigEntry<bool> SageCleanseEnabled { get; private set; }
+            public ConfigEntry<float> SageCleanseStamina { get; private set; }
+            public ConfigEntry<bool> SageCleanseInvincible { get; private set; }
+
+            // ---------------- 【禁忌炼成】：背起玩家时的两种炼成结果 ----------------
+            public ConfigEntry<float> ForbiddenIntervalSeconds { get; private set; }
+            public ConfigEntry<float> ForbiddenSkeletonChance { get; private set; }
+            public ConfigEntry<float> ForbiddenSelfCurse { get; private set; }
+            public ConfigEntry<string> ForbiddenSkullItem { get; private set; }
+            public ConfigEntry<string> ForbiddenZombieItem { get; private set; }
+
+            public void Initialize(ConfigFile config)
+            {
+                Enabled = BindL(config, "炼金术士", "启用职业", true, "是否启用炼金术士职业。");
+                MaxPlayers = BindL(config, "炼金术士", "最大人数", 1,
+                    "炼金术士最多分配给几名玩家。设为 0 表示不限制。默认 1。");
+                MinPlayers = BindL(config, "炼金术士", "最小人数", 0,
+                    "炼金术士最少分配给几名玩家。人数不足时会优先补齐该职业。");
+                Weight = BindL(config, "炼金术士", "抽取权重", 10,
+                    "随机分配时炼金术士被抽中的权重。默认 10。");
+
+                // ---------------- 【等价交换】 ----------------
+                EquivCooldownSeconds = BindL(config, "炼金术士", "等价交换-冷却", 5f,
+                    "【等价交换】两次触发之间的冷却（秒）。默认 5。设为 0 关闭冷却。");
+                EquivToolItems = BindL(config, "炼金术士", "等价交换-工具物品池",
+                    "RopeSpool,ClimbingSpike,RopeShooter,ChainShooter,RescueHook," +
+                    "Anti-Rope Spool,RopeShooterAnti,AntiZooka,Bandages,FirstAidKit," +
+                    "Antidote,Balloon,Dynamite,Lantern,Candle,MagicBean,ScoutCannonItem,PortableStovetopItem," +
+                    "Heat Pack,Sunscreen,Parasol,Glider,Parachute,Binoculars,Compass,Pirate Compass",
+                    "【等价交换】只有拾取这些「工具物品」时才触发（英文逗号分隔的预制体名）。\n" +
+                    "默认：绳索 / 岩钉 / 绳索炮 / 锁链发射器 / 救援抓钩 / 反重绳索 / 反重绳索炮 / 反重力炮 /\n" +
+                    "绷带 / 急救箱 / 解毒剂 / 气球 / 炸药 / 提灯 / 烛台 / 魔豆 / 童子军大炮 / 便携烤炉 /\n" +
+                    "暖宝宝 / 防晒喷雾 / 太阳伞 / 滑翔伞 / 自动降落伞 / 望远镜 / 罗盘 / 海盗罗盘。");
+                EquivStatusPool = BindL(config, "炼金术士", "等价交换-负面状态池",
+                    "Injury,Hunger,Poison,Spores,Hot,Cold,Web,Curse,Petrify",
+                    "【等价交换】每次触发时，从状态池中随机抽取 1 种负面状态并增加（STATUSTYPE 名，英文逗号分隔）。\n" +
+                    "默认：损伤 / 饥饿 / 中毒 / 孢子 / 炎热 / 寒冷 / 蛛网 / 诅咒 / 石化。\n" +
+                    "无法识别的名字会被跳过（并在日志中提示一次）。");
+                EquivStatusAmount = BindL(config, "炼金术士", "等价交换-负面增加", 0.075f,
+                    "【等价交换】每次触发的负面状态增加量（0.075 = 7.5 点）。默认 0.075。\n" +
+                    "石化按整数百分比结算，7.5 点会向下取整为 7 点。");
+
+                ConvertStoneStickChance = BindL(config, "炼金术士", "等价交换-转换-石头木棍概率", 0.30f,
+                    "【等价交换】工具被转化为「石头」（该组物品池默认只有 Stone）的概率。默认 0.30。");
+                ConvertStoneStickItems = BindL(config, "炼金术士", "等价交换-转换-石头木棍物品", "Stone",
+                    "【等价交换】该组结果里等概率随机抽取的物品（英文逗号分隔）。默认 Stone（石头）。");
+                ConvertRootBeanChance = BindL(config, "炼金术士", "等价交换-转换-药材魔豆概率", 0.25f,
+                    "【等价交换】工具被转化为「药用根茎 / 魔豆」的概率。默认 0.25。");
+                ConvertRootBeanItems = BindL(config, "炼金术士", "等价交换-转换-药材魔豆物品", "MedicinalRoot,MagicBean",
+                    "【等价交换】该组结果里等概率随机抽取的物品。默认 MedicinalRoot,MagicBean。");
+                ConvertRopeDrinkChance = BindL(config, "炼金术士", "等价交换-转换-绳索饮料概率", 0.15f,
+                    "【等价交换】工具被转化为「绳索 / 能量饮料 / 运动饮料」的概率。默认 0.15。");
+                ConvertRopeDrinkItems = BindL(config, "炼金术士", "等价交换-转换-绳索饮料物品",
+                    "RopeSpool,Energy Drink,Sports Drink",
+                    "【等价交换】该组结果里等概率随机抽取的物品。默认 RopeSpool,Energy Drink,Sports Drink。");
+                ConvertClimbToolChance = BindL(config, "炼金术士", "等价交换-转换-攀爬道具概率", 0.10f,
+                    "【等价交换】工具被转化为「岩钉 / 绳索炮 / 锁链发射器 / 童子军大炮 / 救援抓钩」的概率。默认 0.10。");
+                ConvertClimbToolItems = BindL(config, "炼金术士", "等价交换-转换-攀爬道具物品",
+                    "ClimbingSpike,RopeShooter,ChainShooter,ScoutCannonItem,RescueHook",
+                    "【等价交换】该组结果里等概率随机抽取的物品。");
+                ConvertBalloonChance = BindL(config, "炼金术士", "等价交换-转换-气球概率", 0.075f,
+                    "【等价交换】工具被转化为「气球 / 一束气球」的概率。默认 0.075。");
+                ConvertBalloonItems = BindL(config, "炼金术士", "等价交换-转换-气球物品", "Balloon,BalloonBunch",
+                    "【等价交换】该组结果里等概率随机抽取的物品。");
+                ConvertAntiGravityChance = BindL(config, "炼金术士", "等价交换-转换-反重道具概率", 0.05f,
+                    "【等价交换】工具被转化为「反重绳索 / 反重绳索炮 / 反重力炮 / 曼德拉草」的概率。默认 0.05。");
+                ConvertAntiGravityItems = BindL(config, "炼金术士", "等价交换-转换-反重道具物品",
+                    "Anti-Rope Spool,RopeShooterAnti,AntiZooka,Mandrake",
+                    "【等价交换】该组结果里等概率随机抽取的物品。");
+                ConvertPandoraChance = BindL(config, "炼金术士", "等价交换-转换-潘多拉概率", 0.03f,
+                    "【等价交换】工具被转化为「潘多拉餐盒」的概率。默认 0.03。");
+                ConvertPandoraItems = BindL(config, "炼金术士", "等价交换-转换-潘多拉物品", "PandorasBox",
+                    "【等价交换】该组结果里等概率随机抽取的物品。默认 PandorasBox。");
+                ConvertExplosiveChance = BindL(config, "炼金术士", "等价交换-转换-炸药水晶概率", 0.025f,
+                    "【等价交换】工具被转化为「炸药 / 奇怪水晶」的概率。默认 0.025。");
+                ConvertExplosiveItems = BindL(config, "炼金术士", "等价交换-转换-炸药水晶物品",
+                    "Dynamite,Strange Gem",
+                    "【等价交换】该组结果里等概率随机抽取的物品。");
+                ConvertStatueChance = BindL(config, "炼金术士", "等价交换-转换-童军雕像概率", 0.01f,
+                    "【等价交换】工具被转化为「童军雕像」的概率。默认 0.01。");
+                ConvertStatueItems = BindL(config, "炼金术士", "等价交换-转换-童军雕像物品", "ScoutEffigy",
+                    "【等价交换】该组结果里等概率随机抽取的物品。默认 ScoutEffigy。");
+                ConvertDollChance = BindL(config, "炼金术士", "等价交换-转换-古老玩偶概率", 0.01f,
+                    "【等价交换】工具被转化为「古老玩偶」的概率。默认 0.01。");
+                ConvertDollItems = BindL(config, "炼金术士", "等价交换-转换-古老玩偶物品", "AncientIdol",
+                    "【等价交换】该组结果里等概率随机抽取的物品。默认 AncientIdol。");
+
+                // ---------------- 【能量汲取】 ----------------
+                DrainExemptItems = BindL(config, "炼金术士", "能量汲取-豁免物品",
+                    "Mushroom Glow,Sports Drink,MedicinalRoot,Mandrake,PandorasBox,Cure-All",
+                    "【能量汲取】这些物品即使可食用也不会被销毁，按正常拾取处理（英文逗号分隔）。\n" +
+                    "默认：诡异菇、运动饮料、药用根茎、曼德拉草、潘多拉餐盒、万灵药。");
+                DrainExtraEdibleItems = BindL(config, "炼金术士", "能量汲取-额外食物物品", "AloeVera",
+                    "【能量汲取】除原版「恢复饥饿 / 食物标签 / 已烤制」判定外，额外视为可食用物品的预制体名（英文逗号分隔）。\n" +
+                    "默认 AloeVera（芦荟）。");
+                DrainCooldownSeconds = BindL(config, "炼金术士", "能量汲取-冷却", 3f,
+                    "【能量汲取】两次触发之间的冷却（秒）。默认 3。设为 0 关闭冷却。");
+                DrainStatusReduce = BindL(config, "炼金术士", "能量汲取-负面削减", 0.025f,
+                    "【能量汲取】每次销毁可食用物品时，自身可治愈负面状态的削减量（0.025 = 2.5 点）。\n" +
+                    "覆盖损伤 / 饥饿 / 寒冷 / 中毒 / 诅咒 / 困倦 / 炎热 / 孢子 / 蛛网 / 捕蝇草；\n" +
+                    "石化由单独的「能量汲取-石化削减」结算。默认 0.025。");
+                DrainPetrifyReduce = BindL(config, "炼金术士", "能量汲取-石化削减", 3,
+                    "【能量汲取】每次销毁可食用物品时，自身石化削减的点数（百分比整数）。默认 3。设为 0 不削减石化。");
+                DrainStamina = BindL(config, "炼金术士", "能量汲取-额外体力", 0.05f,
+                    "【能量汲取】每次销毁可食用物品时，自身增加的额外体力（0.05 = 5 点）。默认 0.05。");
+                DrainRewardEvery = BindL(config, "炼金术士", "能量汲取-触发次数", 7,
+                    "【能量汲取】每触发多少次进行一次额外奖励判定。默认 7。设为 0 关闭奖励判定。");
+                DrainPandoraChance = BindL(config, "炼金术士", "能量汲取-潘多拉概率", 0.40f,
+                    "【能量汲取】额外奖励判定中，获得「潘多拉餐盒」的概率。默认 0.40。");
+                DrainPandoraItem = BindL(config, "炼金术士", "能量汲取-潘多拉物品", "PandorasBox",
+                    "【能量汲取】该奖励的物品预制体名。默认 PandorasBox。");
+                DrainCureAllChance = BindL(config, "炼金术士", "能量汲取-万灵药概率", 0.50f,
+                    "【能量汲取】额外奖励判定中，获得「万灵药」的概率。默认 0.50。");
+                DrainCureAllItem = BindL(config, "炼金术士", "能量汲取-万灵药物品", "Cure-All",
+                    "【能量汲取】该奖励的物品预制体名。默认 Cure-All。");
+                DrainDynamiteChance = BindL(config, "炼金术士", "能量汲取-炸药概率", 0.10f,
+                    "【能量汲取】额外奖励判定中，获得「炸药」的概率。默认 0.10。");
+                DrainDynamiteItem = BindL(config, "炼金术士", "能量汲取-炸药物品", "Dynamite",
+                    "【能量汲取】该奖励的物品预制体名。默认 Dynamite。\n" +
+                    "奖励统一优先放入空物品栏；三个物品栏都满时直接塞入主手并立刻握持。");
+
+                // ---------------- 【贤者之石】 ----------------
+                SageThreshold = BindL(config, "炼金术士", "贤者之石-触发数量", 12,
+                    "【贤者之石】通过【等价交换】累计获得多少个石头后触发一次特殊炼制。默认 12。设为 0 关闭。");
+                SageStatueChance = BindL(config, "炼金术士", "贤者之石-童军雕像概率", 0.25f,
+                    "【贤者之石】第 N 个石头变为「童军雕像」的概率。默认 0.25。");
+                SageStatueItem = BindL(config, "炼金术士", "贤者之石-童军雕像物品", "ScoutEffigy",
+                    "【贤者之石】该结果的物品预制体名。默认 ScoutEffigy。");
+                SageDollChance = BindL(config, "炼金术士", "贤者之石-古老玩偶概率", 0.10f,
+                    "【贤者之石】第 N 个石头变为「古老玩偶」的概率。默认 0.10。");
+                SageDollItem = BindL(config, "炼金术士", "贤者之石-古老玩偶物品", "AncientIdol",
+                    "【贤者之石】该结果的物品预制体名。默认 AncientIdol。");
+                SageGemChance = BindL(config, "炼金术士", "贤者之石-童军宝石概率", 0.05f,
+                    "【贤者之石】第 N 个石头变为「童军宝石（五选一）」的概率。默认 0.05。");
+                SageGemItems = BindL(config, "炼金术士", "贤者之石-童军宝石物品",
+                    "Amulet_Healing,Amulet_SuperJump,Amulet_Clone,Amulet_InfiniteStamina,ScoutsHonor",
+                    "【贤者之石】该结果里等概率随机抽取的童军宝石（英文逗号分隔）。\n" +
+                    "默认：童军的毅力 / 进取 / 盛情 / 野心 / 荣耀。");
+                SageCleanseEnabled = BindL(config, "炼金术士", "贤者之石-清负-启用", true,
+                    "【贤者之石】剩余概率（不与上面三项命中时）：石头消失，清空自身所有负面状态、增加额外体力并获得一次无敌。默认 true。");
+                SageCleanseStamina = BindL(config, "炼金术士", "贤者之石-清负-额外体力", 1f,
+                    "【贤者之石】清负分支增加的额外体力（1.0 = 100 点）。默认 1.0。");
+                SageCleanseInvincible = BindL(config, "炼金术士", "贤者之石-清负-无敌", true,
+                    "【贤者之石】清负分支是否额外获得一次无敌。默认 true。");
+
+                // ---------------- 【禁忌炼成】 ----------------
+                ForbiddenIntervalSeconds = BindL(config, "炼金术士", "禁忌炼成-检测间隔", 0.5f,
+                    "【禁忌炼成】每隔多少秒检测一次「是否背起了另一名玩家」（秒）。默认 0.5。设为 0 关闭该效果。");
+                ForbiddenSkeletonChance = BindL(config, "炼金术士", "禁忌炼成-骷髅概率", 0.70f,
+                    "【禁忌炼成】背起玩家时，把该玩家直接变为骷髅的概率；其余概率走「诅咒头骨 + 僵尸」分支。默认 0.70。");
+                ForbiddenSelfCurse = BindL(config, "炼金术士", "禁忌炼成-自身诅咒", 0.20f,
+                    "【禁忌炼成】「变为骷髅」分支中，自身增加的诅咒（0.20 = 20 点）。默认 0.20。");
+                ForbiddenSkullItem = BindL(config, "炼金术士", "禁忌炼成-诅咒头骨物品", "Cursed Skull",
+                    "【禁忌炼成】「诅咒头骨 + 僵尸」分支中，强制被背者使用的物品预制体名。默认 Cursed Skull。");
+                ForbiddenZombieItem = BindL(config, "炼金术士", "禁忌炼成-僵尸物品", "MushroomZombie",
+                    "【禁忌炼成】「诅咒头骨 + 僵尸」分支中，在被背者原地生成的僵尸预制体名。默认 MushroomZombie。");
+            }
+        }
+
+        /// <summary>
+        /// 捣蛋鬼（Trickster）：【发糖】/【捣蛋】/【蛀牙】。
+        /// 数值口径：状态量 0.025 = 显示 2.5 点；额外体力 0.05 = 5 点。
+        /// </summary>
+        public class TricksterConfig
+        {
+            public ConfigEntry<bool> Enabled { get; private set; }
+            public ConfigEntry<int> MaxPlayers { get; private set; }
+            public ConfigEntry<int> MinPlayers { get; private set; }
+            public ConfigEntry<int> Weight { get; private set; }
+
+            // ---------------- 【发糖】 ----------------
+            public ConfigEntry<float> SugarIntervalSeconds { get; private set; }
+            public ConfigEntry<float> SugarRadius { get; private set; }
+            public ConfigEntry<float> SugarSelfStaminaPerPlayer { get; private set; }
+            public ConfigEntry<string> CandyPool { get; private set; }
+            public ConfigEntry<int> CandyWeightTrailMix { get; private set; }
+            public ConfigEntry<int> CandyWeightMarshmallow { get; private set; }
+            public ConfigEntry<int> CandyWeightLollipop { get; private set; }
+
+            // ---------------- 拾取变糖 ----------------
+            public ConfigEntry<float> PickupCandyChance { get; private set; }
+            public ConfigEntry<string> PickupCandyBlacklist { get; private set; }
+
+            // ---------------- 【捣蛋】 ----------------
+            public ConfigEntry<float> TrickDrowsy { get; private set; }
+            public ConfigEntry<float> TrickTransferChance { get; private set; }
+            public ConfigEntry<int> TrickPandoraCount { get; private set; }
+            public ConfigEntry<float> TrickPandoraIntervalSeconds { get; private set; }
+            public ConfigEntry<float> TrickTransferIntervalSeconds { get; private set; }
+            public ConfigEntry<float> TrickSelfDrowsy { get; private set; }
+
+            // ---------------- 【蛀牙】 ----------------
+            public ConfigEntry<string> CavityItems { get; private set; }
+            public ConfigEntry<float> CavityInjury { get; private set; }
+
+            public void Initialize(ConfigFile config)
+            {
+                Enabled = BindL(config, "捣蛋鬼", "启用职业", true, "是否启用捣蛋鬼职业。");
+                MaxPlayers = BindL(config, "捣蛋鬼", "最大人数", 2,
+                    "捣蛋鬼最多分配给几名玩家。设为 0 表示不限制。默认 2。");
+                MinPlayers = BindL(config, "捣蛋鬼", "最小人数", 0,
+                    "捣蛋鬼最少分配给几名玩家。人数不足时会优先补齐该职业。");
+                Weight = BindL(config, "捣蛋鬼", "抽取权重", 5,
+                    "随机分配时捣蛋鬼被抽中的权重。默认 5。");
+
+                // ---------------- 【发糖】 ----------------
+                SugarIntervalSeconds = BindL(config, "捣蛋鬼", "发糖-触发间隔", 120f,
+                    "【发糖】每隔多少秒自动为自身半径内的玩家发一次糖（秒）。默认 120。设为 0 关闭本效果。");
+                SugarRadius = BindL(config, "捣蛋鬼", "发糖-半径", 30f,
+                    "【发糖】作用半径（米），半径内**不包括自己**的其他玩家每人判定一次。默认 30。");
+                SugarSelfStaminaPerPlayer = BindL(config, "捣蛋鬼", "发糖-自身每人额外体力", 0.05f,
+                    "【发糖】每成功使一名玩家获得糖果，自身增加的额外体力（0.05 = 5 点）。默认 0.05。");
+                CandyPool = BindL(config, "捣蛋鬼", "糖果池", "TrailMix,Marshmallow,Lollipop",
+                    "【发糖】可发放的糖果物品池（英文逗号分隔的预制体名，权重见下方三项）。默认：\n" +
+                    "TrailMix 混合坚果 / Marshmallow 棉花糖 / Lollipop 大棒棒糖。\n" +
+                    "填错或留空时退回「混合坚果 / 棉花糖 / 大棒棒糖」的默认三项。");
+                CandyWeightTrailMix = BindL(config, "捣蛋鬼", "糖果权重-混合坚果", 5, "【发糖】混合坚果 TrailMix 的抽取权重。默认 5。");
+                CandyWeightMarshmallow = BindL(config, "捣蛋鬼", "糖果权重-棉花糖", 3, "【发糖】棉花糖 Marshmallow 的抽取权重。默认 3。");
+                CandyWeightLollipop = BindL(config, "捣蛋鬼", "糖果权重-大棒棒糖", 1, "【发糖】大棒棒糖 Lollipop 的抽取权重。默认 1。");
+
+                // ---------------- 拾取变糖 ----------------
+                PickupCandyChance = BindL(config, "捣蛋鬼", "拾取变糖概率", 1f,
+                    "拾取**可食用物品**时把它替换为随机糖果的概率。默认 1（必定替换），设为 0 关闭。\n" +
+                    "糖果从「糖果池」按同一套权重抽取；命中「拾取变糖黑名单」的物品不受影响。");
+                PickupCandyBlacklist = BindL(config, "捣蛋鬼", "拾取变糖黑名单",
+                    "Mushroom Glow,TrailMix,Marshmallow,Lollipop,Cure-All,PandorasBox",
+                    "拾取这些物品时不替换为糖果（英文逗号分隔的预制体名）。默认：\n" +
+                    "诡异菇 / 混合坚果 / 棉花糖 / 大棒棒糖 / 万灵药 / 潘多拉餐盒。\n" +
+                    "前四种是转职触发物与糖果本身（避免自替换），后两种是药剂与魔盒。");
+
+                // ---------------- 【捣蛋】 ----------------
+                TrickDrowsy = BindL(config, "捣蛋鬼", "捣蛋-困倦", 0.15f,
+                    "【捣蛋】受影响的玩家物品栏已满时，改为增加的困倦（0.15 = 15 点）。默认 0.15。");
+                TrickTransferChance = BindL(config, "捣蛋鬼", "捣蛋-转移概率", 0.70f,
+                    "【捣蛋】特殊判定中「转移物品」的概率；其余概率走「连续施加潘多拉」分支。默认 0.70。");
+                TrickPandoraCount = BindL(config, "捣蛋鬼", "捣蛋-潘多拉次数", 3,
+                    "【捣蛋】潘多拉分支对该玩家连续施加潘多拉效果的次数。默认 3。设为 0 关闭该分支。");
+                TrickPandoraIntervalSeconds = BindL(config, "捣蛋鬼", "捣蛋-潘多拉间隔", 1f,
+                    "【捣蛋】潘多拉分支相邻两次施加的间隔（秒）。默认 1。");
+                TrickTransferIntervalSeconds = BindL(config, "捣蛋鬼", "捣蛋-转移间隔", 1f,
+                    "【捣蛋】相邻两次「转移物品」的最小间隔（秒）。默认 1。\n" +
+                    "一次发糖可能同时捣蛋多名玩家；若同一帧连续转移，物品栏 / 背包的同步尚未完成，\n" +
+                    "多件物品可能因容量判定重叠而丢失。用队列按该间隔依次发放可避免。");
+                TrickSelfDrowsy = BindL(config, "捣蛋鬼", "捣蛋-自身困倦", 0.05f,
+                    "【捣蛋】每影响一名玩家（无论走转移还是潘多拉），自身增加的困倦（0.05 = 5 点）。默认 0.05。");
+
+                // ---------------- 【蛀牙】 ----------------
+                CavityItems = BindL(config, "捣蛋鬼", "蛀牙-物品", "Marshmallow,Lollipop",
+                    "【蛀牙】食用这些物品时自身受到损伤（英文逗号分隔的预制体名）。\n" +
+                    "默认：棉花糖 Marshmallow / 大棒棒糖 Lollipop。");
+                CavityInjury = BindL(config, "捣蛋鬼", "蛀牙-损伤", 0.025f,
+                    "【蛀牙】每次食用上述物品后自身增加的损伤（0.025 = 2.5 点）。默认 0.025。");
             }
         }
     }

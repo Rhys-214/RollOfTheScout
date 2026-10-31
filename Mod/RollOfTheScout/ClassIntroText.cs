@@ -90,6 +90,10 @@ namespace RollOfTheScout
                 case 28: return "周期绑气球、拾取转化、只吃包装熟食、冷热抵抗、额外负面";
                 case 29: return "周期荔莓、食用奖励、非莓惩罚、进食损伤、特殊转职";
                 case 30: return "周期获得昆虫、额外体力溢出取模、夜间加速、独行清负、职业效果复制";
+                case 31: return "传送、曲迁菇、负面状态、周期检测";
+                case 32: return "石化、石头、动态增益、拾取转化、随机效果、范围守护";
+                case 33: return "工具转化、随机负面、食物炼化、周期强力炼制、背人炼成";
+                case 34: return "周期范围发糖、满物品栏捣蛋、拾取转化、吃糖惩罚";
                 default: return string.Empty;
             }
         }
@@ -98,8 +102,8 @@ namespace RollOfTheScout
         {
             switch (code)
             {
-                case 1: return "【开路先锋】每关获得随机道具背包；首次昏迷将完全清除负面复活；【高代谢】迫使你不断管理饥饿与冲刺。";
-                case 2: return "【团队核心】持续强力范围增益；自身诅咒石化随全员生死波动；自身死亡触发全员激励；全员存活时，自己开启雕像可获额外物品。";
+                case 1: return "【开路先锋】每关获得随机道具背包；首次昏迷将完全清除负面复活；*高代谢*迫使你不断管理饥饿与冲刺。";
+                case 2: return "【团队核心】周期强力范围增益，使玩家获得额外体力、治疗损伤、补充饥饿、减少困倦；自身诅咒石化随全员生死波动；自身死亡触发全员激励；全员存活时，自己开启雕像可获额外物品。";
                 case 3: return "【移动补给】开局自带随机背包；定时获得随机物资；初始诅咒与较高石化需谨慎管理；与【炊事员】有特殊羁绊。";
                 case 4: return "【随队医护】每关获得随机医疗物资背包；近身小范围持续减伤解毒；队友阵亡会触发自伤惩罚。";
                 case 5: return "【生死问题】开局自带仪式匕首与吹箭筒；拾取物品概率变为武器；杀人还是救人，这是一个问题。";
@@ -107,7 +111,7 @@ namespace RollOfTheScout
                 case 7: return "【骷髅之王】致敬本模组最不小团体的职业；通过玩家死亡、与骷髅配合降低自身诅咒；持续为周围的人类玩家施加中毒、骷髅玩家获得额外体力与无敌。";
                 case 8: return "【负面转化】受到绝大部分负面状态时，等量转化额外体力；身上无负面状态则周期损失额外体力；对特定负面状态有耐受。";
                 case 9: return "【自然力量】自身对中毒与孢子有较强抗性；只能食用生的自然食物，否则获得损伤；定时获得粉莓蕉；自身无法主动使用攀爬道具，拾取会直接变为木棍。";
-                case 10: return "【结伴而行】开局自带随机物资腰包；落单独行持续流血与饥饿；需和玩家结伴同行缓解，与同职业【童军】与【领袖】有加强羁绊。";
+                case 10: return "【结伴而行】开局自带随机物资腰包；落单独行持续流血与饥饿；需和玩家结伴同行缓解，与同职业【童军】或【领袖】有加强羁绊。";
                 case 11: return "【团队旗手】每关获得检查点旗标；自身插旗立即范围清除负面，三秒后全员获得随机增益效果；自身每次插旗增加石化。";
                 case 12: return "【一起跳舞】自身范围内玩家跳舞获得额外体力；自身跳舞强制周围玩家共舞；定时强制后空翻且必定摔倒。";
                 case 13: return "【模因传播】语音与产蛋周期获得额外体力；传染式转职，可主动通过喂食煎蛋强制同化他人；较大范围内，同类周期回血减伤，但定时强制后空翻且必定摔倒。";
@@ -116,7 +120,7 @@ namespace RollOfTheScout
                 case 16: return "【立体机动】初始高诅咒高石化需谨慎管理；开局自带黄金抓钩与滑翔翼；使用抓钩勾中玩家会立即触发高损伤惩罚；免疫【潘多拉之子】且拾取的潘多拉餐盒直接消失。";
                 case 17: return "【烤炉大师】定时获得便携烤炉；烤任意物品都能解饿；烤多会中毒；周期烤非食物（道具）可获额外体力；手持便携烤炉时有高频炎热。";
                 case 18: return "【饮食保障】定时获得便携烤炉；烤熟生食可为周围回饥饿与体力；食用熟食有额外收益，食用生食有较大惩罚；附近有人饥饿会致困昏迷；与【后勤】有特殊羁绊。";
-                case 19: return "【并非和平】右键拉人变为踢人；踢中玩家获得额外体力，踢空加困倦；开局自带诅咒。";
+                case 19: return "【并非和平】右键拉人变为踢人；每踢中一名玩家+5额外体力，踢空则-5额外体力并+20困倦；开局自带诅咒。";
                 case 20: return "【负重前行】开局自带背包；负重过半达标后，周期获得加速与额外体力。";
                 case 21: return "【火线救援】队友昏迷将自动传送并获得一次无敌，背起再获得一次加速与大量额外体力；背起玩家时治疗双方；有玩家死亡会获得石化惩罚。";
                 case 22: return "【精致防晒】每关获得三瓶防晒喷雾，强制覆盖物品栏；获得防晒奖励额外体力，每次用完防晒喷雾会额外奖励额外体力并积累石化。";
@@ -128,6 +132,10 @@ namespace RollOfTheScout
                 case 28: return "【太空漂流】身上定时绑上气球；无法拾取气球/一束气球；拾取物品概率变为火箭背包/喷气背包；只吃包装食品或熟食，否则中毒；对冷热有一定抗性，但部分负面状态会额外加重。";
                 case 29: return "【大果成瘾】定时获得青/紫荔莓；食用青荔莓获得冲刺效果、紫荔莓则给无限体力；食用其他食物加困倦；每次进食固定损伤；他人多次连吃荔莓会被强制同化。";
                 case 30: return "【代码之力】定时获得随机虫类，获得时大概率中毒；额外体力溢出会取模重置；夜晚周期获得加速；独行会周期清负面；无负面且无虫时会复制在场他人职业效果，并持续生效一段时间。";
+                case 31: return "【传送】每30秒检测、记录自身当前所有（负面）状态值并比对上一次记录的状态值，若检测到某特定（负面）状态相比上一次检测有增加，则与随机一名其他玩家互换位置（检测的特定状态每150秒更换一种，检测状态池有损伤、炎热、寒冷、中毒、孢子、荆棘、困倦、诅咒、石化、箭），否则获得一个曲迁菇（优先放入空物品栏，已满则不获得）。【混乱】拾取物品时，有50%概率物品直接消失，并强制对自身使用一次潘多拉餐盒（默认部分特殊物品不受影响：诡异菇、曲迁菇、潘多拉餐盒、信号棒、奇怪水晶、童军的毅力、童军的进取、童军的盛情、童军的野心、童军的荣耀）。【末影】每次食用运动饮料或万灵药后，+20损伤；死亡时，在尸体处生成一个曲迁菇；每5秒检测一次：若自身处于水中（如海滩、森蕈、雾沼的水体），+10损伤，并立即传送随机一名玩家处；若自身物品栏与装备的背包中曲迁菇总数量＞1，+20困倦；自身直接丢弃曲迁菇时，该曲迁菇会立即消失（被清除），蓄力扔出则正常生效。";
+                case 32: return "【活体石像】站立不动会持续积蓄石化，移动则缓慢消退；自身石化越高，增益效果越强；若石化偏低，白天会畏光叠加困倦；周期内石化达到峰值时会强制破壳，触发一次性强力增益，且能影响周围；拾取食物会变石头，而石头可能带来随机增益。";
+                case 33: return "【等价炼成】拾取工具时获得随机负面并转化为随机物品；拾取可食用物品会转化为负面清除与额外体力，每7次会有特殊奖励；每炼制出12石头将触发一次特殊强力炼制；背起玩家会将其变为骷髅，或将其炼化为尸。";
+                case 34: return "【万圣敲门】定时给范围内的玩家发糖，成功使自身获得额外体力；若对方物品栏已满则捣蛋：随机抢走一件物品或连施潘多拉；拾取食物会变糖，但吃糖有蛀牙的损伤惩罚。";
                 default: return string.Empty;
             }
         }
@@ -170,6 +178,10 @@ namespace RollOfTheScout
                 case 28: return "Periodic balloons · Pickup conversion · Packaged/cooked food only · Heat/cold resistance · Extra debuffs";
                 case 29: return "Periodic kingberries · Eating rewards · Non-berry penalty · Injury per meal · Special reclass";
                 case 30: return "Periodic insects · Extra stamina overflow modulo · Night sprint · Solo debuff cleanse · Class-effect copy";
+                case 31: return "Teleport · Warp Fungus · Negative statuses · Periodic checks";
+                case 32: return "Petrify · Stones · Dynamic buffs · Pickup conversion · Random effects · Area guard";
+                case 33: return "Tool transmutation · Random debuff · Food conversion · Forced periodic refining · Carrying taboo";
+                case 34: return "Periodic area candy · Trick on full inventories · Pickup conversion · Sugar penalty";
                 default: return string.Empty;
             }
         }
@@ -178,8 +190,8 @@ namespace RollOfTheScout
         {
             switch (code)
             {
-                case 1: return "【Pioneer】 a random-item backpack every level; your first faint fully clears debuffs as you revive; 【Hyper-metabolism】 forces you to keep managing hunger and sprints.";
-                case 2: return "【Team core】 strong sustained area buffs; your curse and petrify swing with everyone's life and death; your death rallies everyone; while all are alive, opening an Ancient Idol yourself yields an extra item.";
+                case 1: return "【Pioneer】 a random-item backpack every level; your first faint fully clears debuffs as you revive; *Hyper-metabolism* forces you to keep managing hunger and sprints.";
+                case 2: return "【Team core】 periodic strong area buffs that grant players extra stamina, heal injury, restore hunger and reduce drowsiness; your curse and petrify swing with everyone's life and death; your death rallies everyone; while all are alive, opening an Ancient Idol yourself yields an extra item.";
                 case 3: return "【Mobile supply】 starts with a random backpack; receives random supplies on a timer; your starting curse and high petrify need careful management; special bond with the Cook.";
                 case 4: return "【Field medic】 a random medical backpack every level; sustained close-range injury and poison relief; a teammate's death triggers a self-injury penalty.";
                 case 5: return "【A matter of life and death】 starts with a ritual dagger and a blowgun; picked-up items may become weapons; to kill or to save, that is the question.";
@@ -187,7 +199,7 @@ namespace RollOfTheScout
                 case 7: return "【King of skeletons】 a tribute to the mod's least small group; lower your curse through player deaths and skeleton allies; keep poisoning nearby humans while skeletons gain extra stamina and invincibility.";
                 case 8: return "【Negative conversion】 most debuffs you take convert into an equal amount of extra stamina; with no debuffs you periodically lose extra stamina; tolerant against specific debuffs.";
                 case 9: return "【Power of nature】 strong resistance to poison and spores; you can only eat raw natural food or take injury; gains a pink banana on a timer; climbing tools are unusable — picked-up ones turn into wooden sticks.";
-                case 10: return "【Better together】 starts with a random-item fanny pack; alone you bleed and starve; you need company to ease it; strengthened bond with fellow Scouts and Leaders.";
+                case 10: return "【Better together】 starts with a random-item fanny pack; alone you bleed and starve; you need company to ease it; strengthened bond with fellow Scouts or Leaders.";
                 case 11: return "【Team standard-bearer】 a checkpoint flag every level; planting it immediately clears debuffs in range and 3 s later grants everyone random buffs; each plant adds petrify to yourself.";
                 case 12: return "【Dance together】 players dancing in your range grant extra stamina; your own dance forces nearby players to dance; periodic forced backflips that always end in a fall.";
                 case 13: return "【Meme spread】 voice and egg cycles grant extra stamina; contagious reclassing — you can force-merge others by feeding fried eggs; same-class players heal and take less injury over a larger range, but periodic backflips always end in a fall.";
@@ -196,7 +208,7 @@ namespace RollOfTheScout
                 case 16: return "【Aerial mobility】 high starting curse and petrify need careful management; starts with a golden grapnel and a glider; hooking a player with the grapnel immediately triggers a heavy injury penalty; immune to Pandora effects and picked-up Pandora lunchboxes vanish.";
                 case 17: return "【Grill master】 portable stoves on a timer; cooking anything sates hunger; cooking too much poisons you; periodically cooking non-food (tools) grants extra stamina; holding a portable stove causes frequent heat.";
                 case 18: return "【Food security】 portable stoves on a timer; cooking raw food restores hunger and stamina around you; cooked food pays extra, raw food punishes hard; nearby hungry players make you drowsy; special bond with the Logistician.";
-                case 19: return "【Not so peaceful】 the right-click grab becomes a kick; kicking a player grants extra stamina, missing adds drowsiness; starts with curse.";
+                case 19: return "【Not so peaceful】 the right-click grab becomes a kick; each hit grants +5 extra stamina, while a miss costs 5 extra stamina and adds 20 drowsiness; starts with curse.";
                 case 20: return "【Carrying the weight】 starts with a backpack; once your load passes the threshold you periodically gain a sprint and extra stamina.";
                 case 21: return "【Fireline rescue】 a teammate's faint auto-teleports you with invincibility; picking them up grants a sprint and a large amount of extra stamina; carrying a player heals both; a player's death gives you petrify.";
                 case 22: return "【Exquisite sunscreen】 three sunscreens every level, force-overwriting your inventory; gaining sunscreen grants extra stamina, and finishing each bottle grants more extra stamina plus petrify.";
@@ -208,6 +220,10 @@ namespace RollOfTheScout
                 case 28: return "【Space drift】 balloons are tied on periodically; balloons and bunches of balloons cannot be picked up; picked-up items may become rocket packs or jetpacks; only packaged or cooked food, otherwise poison; some heat/cold resistance but certain debuffs hit harder.";
                 case 29: return "【Big-berry addiction】 green/purple kingberries on a timer; green grants a sprint, purple grants infinite stamina; other food adds drowsiness; every meal costs injury; others who chain-eat kingberries are forced to merge.";
                 case 30: return "【Power of code】 random insects on a timer, usually with poison; extra stamina overflow wraps around; periodic sprint at night; solo play periodically cleanses debuffs; with no debuffs and no insects you copy another present class's effect for a while.";
+                case 31: return "【Teleport】Every 30 s, records all your current (negative) status values and compares the selected negative status with the previous record. If that status increased, swap positions with a random other player (the selected status changes every 150 s; the pool is injury, heat, cold, poison, spores, thorns, drowsiness, curse, petrify and arrow); otherwise gain 1 Warp Fungus (placed into an empty inventory slot; when all slots are full, you gain nothing). 【Chaos】Each pickup has a 50% chance to vanish directly and forcibly use one Pandora's lunchbox on yourself (by default some special items are exempt: glow mushroom, Warp Fungus, Pandora's lunchbox, signal stick, strange crystal, the Scout's perseverance, initiative, hospitality and ambition, and the Scout's glory). 【Ender】Each time you eat a sports drink or Cure-All, +20 injury; on death, 1 Warp Fungus spawns at the corpse; every 5 s: in water (e.g. the water bodies of Shore, Tropics and Swamp) you gain +10 injury and are immediately teleported to a random player; when the total Warp Fungi in your inventory and equipped backpack is greater than 1, +20 drowsiness. If you directly discard a Warp Fungus it vanishes immediately (cleared); if you throw it with charge it behaves normally.";
+                case 32: return "【Living Statue】Standing still builds petrify while moving slowly sheds it; the higher your petrify, the stronger your buffs; when petrify is low, daylight adds drowsiness; when petrify peaks within a cycle you are forced to break the shell, triggering a one-time powerful buff that also affects those around you; food you pick up turns to stone, and stones may bring random buffs.";
+                case 33: return "【Equivalent alchemy】picked-up tools gain a random debuff and are turned into random items; picked-up edible items are converted into debuff relief and extra stamina, with a special reward every 7 triggers; every 12 stones refined triggers one special powerful transmutation; carrying a player turns them into a skeleton, or refines them into a corpse.";
+                case 34: return "【Halloween knocker】candy to players in range on a timer, granting you extra stamina when it lands; a full inventory gets tricked — one item is snatched or Pandora strikes repeatedly; edible pickups turn into candy, but eating candy costs injury from cavities.";
                 default: return string.Empty;
             }
         }

@@ -15,11 +15,11 @@
 - **Dozens of classes, each with pros and cons** — from serious ones (Explorer / Leader / Logistician / Doctor…) to chaotic ones (Pandora / Pacifist / Qu…).
 - **Weighted random assignment**: each class supports its own **max players / min players / draw weight**.
 - **Team-oriented design**: many classes buff nearby teammates (rally, nursing, supplies, rescue…).
-- **Class change**: eat a configurable item (default: the Glow Mushroom) to change your class.
+- **Class change**: eat a configurable item (default: the Glow Mushroom) to change your class. You can also change class by performing a specific emote (default: "No No")—however, this method is disabled by default.
 - **Host-screen UI**: a class-assignment panel plus effect notifications (toasts).
-- **Overhead class prefix**: shows `【Class】Nickname` above players (drawn locally on each client).
+- **Overhead class prefix**: shows `【Class】Nickname` above players (drawn locally on each client); Disabled by default.
 - **Optional client support** (Photon custom event `197`): the companion addon shows class info and gives MilesSoul clients the same local gem-action detection and settlement as the main mod's client mode.
-- **Fully configurable**, and the config file is **bilingual**: Chinese for a Chinese game language, English for every other language.
+- **Fully configurable**, and the config file is **bilingual**.
 
 ### Requirements
 
@@ -38,11 +38,11 @@ Clients install **nothing** by default. Optionally, the main mod or the companio
 
 Config files are generated automatically on first run(`BepInEx/config/com.peakmodding.RollOfTheScout.cfg`), and can also be edited directly in-game through the ModConfig config UI.
 > If a new version adds options, an existing `.cfg` will **not** pick up the new keys — delete the old `.cfg` and restart to regenerate.
-> After the mod is updated to version 1.0.7, the mod configuration file will be automatically backed up and reset during the update.
+> After the mod is updated to version 1.0.7 or later, the mod configuration file will be automatically backed up and reset during the update.
 
-### Current class list (v1.0.0, as of Oct 18, 2026)
+### Current class list (v1.1.0, as of Oct 31, 2026)
 
-`Explorer`, `Leader`, `Logistician`, `Doctor`, `Assassin`, `Pandora`, `Necromancer`, `M`, `Savage`, `Scout`, `StandardBearer`, `Dancer`, `Daihao`, `Saint`, `Mage`, `Challenger`, `MasterChef`, `Cook`, `Pacifist`, `Hamster`, `Firefighter`, `Narcissist`, `LoneWolf`, `Gunner`, `Band`, `MilesSoul`, `Qu`, `Astronaut`, `Langwang`, `Programmer`.
+`Explorer`, `Leader`, `Logistician`, `Doctor`, `Assassin`, `Pandora`, `Necromancer`, `M`, `Savage`, `Scout`, `StandardBearer`, `Dancer`, `Daihao`, `Saint`, `Mage`, `Challenger`, `MasterChef`, `Cook`, `Pacifist`, `Hamster`, `Firefighter`, `Narcissist`, `LoneWolf`, `Gunner`, `Band`, `MilesSoul`, `Qu`, `Astronaut`, `Langwang`, `Programmer`, `ChaosEnderman`, `Gargoyle`, `Alchemist`, `Trickster`.
 
 ### Building from source
 
@@ -105,6 +105,8 @@ Licensed under the **[GNU General Public License v3.0 (GPLv3)](LICENSE)**.
     - 落羽之月所言
     - 星辰幻玥
     - 御坂御坂
+    - 笙十二
+    - 救赎要玩剁菜
 
 ### Disclaimer
 
@@ -128,11 +130,11 @@ Welcome to join the PEAK community group ~ (QQ group: **814891614**; mod updates
 - **数十个职业，各有正负效果**：既有正经向的（先驱 / 领袖 / 后勤 / 医生……），也有整活向的（潘多拉之子 / 和平主义者 / 区……）。
 - **加权随机分配**：每个职业支持独立的**最大人数 / 最小人数 / 抽取权重**。
 - **团队向设计**：许多职业会为附近队友带来增益（号召、护理、补给、救援……）。
-- **转职机制**：食用可配置的物品（默认「诡异菇」）即可更换职业。
+- **转职机制**：食用可配置的物品（默认「诡异菇」）即可更换职业。也可以通过做特定的表情动作（默认为“不行不行”）来进行转职——不过该方式默认禁用。
 - **主机屏幕 UI**：职业分配面板 + 效果提示（Toast）。
-- **头顶职业前缀**：在玩家头顶显示「【职业】昵称」（各客户端本地绘制）。
+- **头顶职业前缀**：在玩家头顶显示「【职业】昵称」（各客户端本地绘制）；默认禁用。
 - **可选客机支持**（Photon 自定义事件 `197`）：配套附属模组可显示职业信息，并让残魂客机使用与主模组客机模式相同的本机宝石检测与结算。
-- **全部可配置**，且配置文件为**中英双语**：游戏语言为中文时用中文配置，其它语言一律使用英文。
+- **全部可配置**，且配置文件为**中英双语**。
 
 ### 环境要求
 
@@ -151,11 +153,11 @@ Welcome to join the PEAK community group ~ (QQ group: **814891614**; mod updates
 
 配置文件将在首次运行自动生成（`BepInEx/config/com.peakmodding.RollOfTheScout.cfg`），也可在游戏内的 ModConfig 配置界面直接修改。
 > 新版本若新增了配置项，**旧的 `.cfg` 不会自动补全新键** —— 请删除旧版 `.cfg` 后重启以重新生成。
-> 模组1.0.7版本更新后，模组配置文件将会自动备份与更新重置。
+> 模组1.0.7版本及以后，模组配置文件将会自动备份与更新重置。
 
-### 当前版本职业一览（v1.0.0，截止至2026年10月18日）
+### 当前版本职业一览（v1.1.0，截止至2026年10月31日）
 
-`先驱, 领袖, 后勤, 医生, 刺客, 潘多拉之子, 死灵法师, M, 野人, 童军, 旗手, 舞王, 待皓, 圣人, 法师, 挑战者, 特级厨师, 炊事员, 和平主义者, 仓鼠, 救火队员, 自恋狂, 独狼, 炮手, 乐队成员, 迈尔斯残魂, 区, 太空人, 榔王, 程序员`。
+`先驱, 领袖, 后勤, 医生, 刺客, 潘多拉之子, 死灵法师, M, 野人, 童军, 旗手, 舞王, 待皓, 圣人, 法师, 挑战者, 特级厨师, 炊事员, 和平主义者, 仓鼠, 救火队员, 自恋狂, 独狼, 炮手, 乐队成员, 迈尔斯残魂, 区, 太空人, 榔王, 程序员, 混乱末影人, 石像鬼, 炼金术士，捣蛋鬼`
 
 
 ### 从源码编译
@@ -219,6 +221,8 @@ dotnet build Mod/RollOfTheScout/RollOfTheScout.csproj -c Release
     - 落羽之月所言
     - 星辰幻玥
     - 御坂御坂
+    - 笙十二
+    - 救赎要玩剁菜
 
 ### 免责声明
 

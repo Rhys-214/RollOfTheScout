@@ -276,7 +276,7 @@ namespace RollOfTheScout.Patches
                 // 直接消失：销毁世界物品并跳过原版入包
                 Plugin.Log.LogInfo(
                     $"[RollOfTheScout] 潘多拉：{character.characterName} 拾取的物品直接消失了（概率 {(1f - chance) * 100f:0.#}%）。");
-                PhotonNetwork.Destroy(__instance.gameObject);
+                HostApi.ConsumePickedItem(__instance);
                 return false;
             }
             catch (System.Exception e)
@@ -378,7 +378,7 @@ namespace RollOfTheScout.Patches
                 // 直接消失：销毁世界物品并跳过原版入包
                 Plugin.Log.LogInfo(
                     $"[RollOfTheScout] 完美主义：{character.characterName} 拾取的物品直接消失了（概率 {chance * 100f:0.#}%）。");
-                PhotonNetwork.Destroy(__instance.gameObject);
+                HostApi.ConsumePickedItem(__instance);
                 return false;
             }
             catch (System.Exception e)
@@ -423,7 +423,7 @@ namespace RollOfTheScout.Patches
                 // 直接消失：销毁世界物品并跳过原版入包
                 Plugin.Log.LogInfo(
                     $"[RollOfTheScout] 不屑：{character.characterName} 拾取的潘多拉魔盒直接消失了。");
-                PhotonNetwork.Destroy(__instance.gameObject);
+                HostApi.ConsumePickedItem(__instance);
                 return false;
             }
             catch (System.Exception e)
@@ -655,6 +655,137 @@ namespace RollOfTheScout.Patches
         {
             if (data.TryGetDataEntry<T>(key, out T existing) && existing != null) return existing;
             return data.RegisterNewEntry<T>(key);
+        }
+    }
+
+    /// <summary>
+    /// 石像鬼·【石化】（拾取）：石化达到阈值时食物变石头；拾取石头时按概率触发状态收益 / 清负 / 化雕像。
+    ///
+    /// 拦截点选原版 <c>Item.RequestPickup(PhotonView characterView)</c>（与潘多拉 / 太空人 / 混乱末影人一致），
+    /// 因为只有在这里才能拿到世界物品实例并 <c>PhotonNetwork.Destroy</c>：
+    /// 本轮调整后除「30% 无变化」外，其余石头结果都会让石头**消失**，<c>Player.AddItem</c> 前缀无法销毁世界物品。
+    /// 食物变石头 / 石头化雕像由主机在销毁原物品后，通过 <c>HostApi.GiveItem</c> 重新发放目标物品；
+    /// 若发放失败则在脚下生成，避免物品凭空消失。
+    /// </summary>
+    public static class GargoylePickupPatch
+    {
+        /// <summary>对应 Item.RequestPickup(PhotonView characterView)。</summary>
+        public static bool Prefix(Item __instance, PhotonView characterView)
+        {
+            try
+            {
+                if (!PhotonNetwork.IsMasterClient) return true;
+                if (__instance == null || characterView == null) return true;
+
+                var host = HostClassManager.Instance;
+                if (host == null) return true;
+                if (!ModConfig.General.Enabled.Value || !ModConfig.Gargoyle.Enabled.Value) return true;
+
+                var character = characterView.GetComponent<Character>();
+                if (character == null) return true;
+                if (host.GetClassOf(character) != ClassType.Gargoyle) return true;
+
+                var result = host.OnGargoylePickup(__instance, character);
+                if (result == HostClassManager.GargoylePickupResult.Keep) return true;
+
+                // 先销毁世界物品，再按结果发放替代物 / 直接消失；返回 false 跳过原版入包。
+                HostApi.ConsumePickedItem(__instance);
+
+                if (result == HostClassManager.GargoylePickupResult.GiveStone)
+                {
+                    GiveOrDrop(character, ModConfig.Gargoyle.FoodToStoneItem.Value, "石头");
+                }
+                else if (result == HostClassManager.GargoylePickupResult.GiveStatue)
+                {
+                    GiveOrDrop(character, ModConfig.Gargoyle.StatueItem.Value, "童军雕像");
+                }
+
+                return false;
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogError($"[RollOfTheScout] 石化·处理拾取时异常：{e.Message}");
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// 把替代物品以「原版拾取」的方式发给玩家（空物品栏优先，全满则进主手并立即握持）；
+        /// 发放失败（主手也被占用 / 正在攀爬）时在脚下生成，避免「石头已销毁但什么都没拿到」。
+        /// </summary>
+        private static void GiveOrDrop(Character character, string prefabName, string label)
+        {
+            string name = prefabName != null ? prefabName.Trim() : string.Empty;
+            if (string.IsNullOrEmpty(name)) return;
+
+            if (HostApi.GiveItemAsPickup(character, name, out _)) return;
+
+            HostApi.SpawnItemAtFeet(character, name);
+            Plugin.Log.LogWarning(
+                $"[RollOfTheScout] 石化：{character.characterName} 的{label} {name} 未能入包，已改为生成在脚下。");
+        }
+    }
+
+    /// <summary>
+    /// 炼金术士·【等价交换】/【能量汲取】（拾取）：
+    /// · 工具物品 → 随机负面状态 + 随机转化为另一件物品（带 5 秒冷却）；
+    /// · 可食用物品（豁免表以外）→ 直接销毁，削减负面并回复额外体力。
+    ///
+    /// 与潘多拉 / 圣人 / 挑战者 / 迈尔斯残魂 / 区 / 太空人 / 混乱末影人 / 石像鬼共用
+    /// <c>Item.RequestPickup(PhotonView characterView)</c>（<c>[PunRPC]</c>，<c>RpcTarget.MasterClient</c>，
+    /// 只在主机执行）。只有这里能在销毁世界物品的同时跳过原版入包；
+    /// 「转化为另一件物品」由主机销毁原物品后通过 <c>HostApi.GiveItem</c> 发放替代物。
+    /// </summary>
+    public static class AlchemistPickupPatch
+    {
+        /// <summary>对应 Item.RequestPickup(PhotonView characterView)。</summary>
+        public static bool Prefix(Item __instance, PhotonView characterView)
+        {
+            try
+            {
+                if (!PhotonNetwork.IsMasterClient) return true;
+                if (__instance == null || characterView == null) return true;
+
+                var host = HostClassManager.Instance;
+                if (host == null) return true;
+                if (!ModConfig.General.Enabled.Value || !ModConfig.Alchemist.Enabled.Value) return true;
+
+                var character = characterView.GetComponent<Character>();
+                if (character == null) return true;
+                if (host.GetClassOf(character) != ClassType.Alchemist) return true;
+
+                var result = host.OnAlchemistPickup(__instance, character, out string givePrefab);
+                if (result == HostClassManager.AlchemistPickupResult.Keep) return true;
+
+                // 先销毁世界物品，再按结果发放替代物 / 直接消失；返回 false 跳过原版入包。
+                HostApi.ConsumePickedItem(__instance);
+
+                if (result == HostClassManager.AlchemistPickupResult.Give
+                    && !string.IsNullOrEmpty(givePrefab))
+                {
+                    GiveOrDrop(character, givePrefab);
+                }
+
+                return false;
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogError($"[RollOfTheScout] 炼金术士·处理拾取时异常：{e.Message}");
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// 把转化 / 炼制物品以「原版拾取」的方式发给玩家（空物品栏优先，全满则进主手并立即握持）；
+        /// 发放失败时在脚下生成，避免「原物品已销毁但什么都没拿到」。
+        /// </summary>
+        private static void GiveOrDrop(Character character, string prefabName)
+        {
+            if (HostApi.GiveItemAsPickup(character, prefabName, out _)) return;
+
+            HostApi.SpawnItemAtFeet(character, prefabName);
+            Plugin.Log.LogWarning(
+                $"[RollOfTheScout] 炼金术士：{character.characterName} 的 {prefabName} 未能入包，已改为生成在脚下。");
         }
     }
 
@@ -1240,7 +1371,7 @@ namespace RollOfTheScout.Patches
                 // 其余物品：直接消失（销毁世界物品并跳过原版入包）
                 Plugin.Log.LogInfo(
                     $"[RollOfTheScout] 封印之力：{character.characterName} 拾取的 {name ?? __instance.itemID.ToString()} 直接消失了。");
-                PhotonNetwork.Destroy(__instance.gameObject);
+                HostApi.ConsumePickedItem(__instance);
                 return false;
             }
             catch (System.Exception e)
@@ -1646,7 +1777,7 @@ namespace RollOfTheScout.Patches
 
                 // 直接消失：销毁世界物品并跳过原版入包
                 Plugin.Log.LogInfo($"[RollOfTheScout] 分解者：{character.characterName} 拾取的 {itemName} 被直接分解了。");
-                PhotonNetwork.Destroy(__instance.gameObject);
+                HostApi.ConsumePickedItem(__instance);
                 host.OnQuDecomposed(character);
                 return false;
             }
@@ -1731,7 +1862,7 @@ namespace RollOfTheScout.Patches
                 if (!host.OnAstronautPickup(__instance, character)) return true;
 
                 // 直接消失：销毁世界物品并跳过原版入包
-                PhotonNetwork.Destroy(__instance.gameObject);
+                HostApi.ConsumePickedItem(__instance);
                 return false;
             }
             catch (System.Exception e)
@@ -1802,6 +1933,118 @@ namespace RollOfTheScout.Patches
             catch (System.Exception e)
             {
                 Plugin.Log.LogError($"[RollOfTheScout] 榔王·处理食用事件时异常：{e.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// 混乱末影人·【混乱】（拾取）：拾取物品时有一定概率物品直接消失，并强制对自己使用一次潘多拉餐盒。
+    ///
+    /// 与潘多拉之子 / 圣人 / 挑战者 / 迈尔斯残魂 / 区 / 太空人 共用同一拦截点
+    /// <c>Item.RequestPickup(PhotonView characterView)</c>：它是 <c>[PunRPC]</c>，
+    /// 由拾取方以 <c>RpcTarget.MasterClient</c> 调用，天然只在主机执行；且「直接消失」必须走这里，
+    /// 才能在销毁世界物品的同时跳过原版入包。
+    ///
+    /// 具体判定与「强制使用潘多拉餐盒」全部由 <see cref="HostClassManager.OnChaosEndermanPickup"/> 完成。
+    /// </summary>
+    public static class ChaosEndermanPickupPatch
+    {
+        /// <summary>对应 Item.RequestPickup(PhotonView characterView)。</summary>
+        public static bool Prefix(Item __instance, PhotonView characterView)
+        {
+            try
+            {
+                if (!PhotonNetwork.IsMasterClient) return true;
+                if (__instance == null || characterView == null) return true;
+
+                var host = HostClassManager.Instance;
+                if (host == null) return true;
+                if (!ModConfig.General.Enabled.Value || !ModConfig.ChaosEnderman.Enabled.Value) return true;
+
+                var character = characterView.GetComponent<Character>();
+                if (character == null) return true;
+
+                // 只有混乱末影人触发；其他职业拾取物品保持原样
+                if (host.GetClassOf(character) != ClassType.ChaosEnderman) return true;
+
+                if (!host.OnChaosEndermanPickup(__instance, character)) return true;
+
+                // 直接消失：销毁世界物品并跳过原版入包
+                HostApi.ConsumePickedItem(__instance);
+                return false;
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogError($"[RollOfTheScout] 混乱末影人·处理拾取时异常：{e.Message}");
+                return true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 混乱末影人·【末影】（食用）：食用运动饮料 / 万灵药后 +损伤。
+    ///
+    /// 与转职 / 野人 / 待皓 / 太空人 / 榔王共用 <c>Item.Consume(int consumerID)</c>
+    /// （Harmony 支持多 Prefix；玩家单一职业，不冲突），并由 <c>GlobalEvents.OnItemConsumed</c> 兜底；
+    /// 两条通道由 <see cref="HostClassManager.OnChaosEndermanItemConsumed"/> 内的去重窗口保证只生效一次。
+    /// </summary>
+    public static class ChaosEndermanEatPatch
+    {
+        /// <summary>对应 Item.Consume(int consumerID)。</summary>
+        public static void Prefix(Item __instance, int consumerID)
+        {
+            try
+            {
+                if (!PhotonNetwork.IsMasterClient) return;
+                if (__instance == null) return;
+                if (HostClassManager.Instance == null) return;
+
+                var view = PhotonNetwork.GetPhotonView(consumerID);
+                if (view == null) return;
+                var character = view.GetComponent<Character>();
+                if (character == null || character.player == null) return;
+
+                HostClassManager.Instance.OnChaosEndermanItemConsumed(__instance, character);
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogError($"[RollOfTheScout] 混乱末影人·处理食用事件时异常：{e.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// 混乱末影人·【末影】（丢弃）：自身**直接丢弃**曲迁菇时立即清除该物品；**蓄力扔出**则保持原版行为。
+    ///
+    /// 原版所有丢出（普通丢弃 / 蓄力扔出 / DropAllItems）最终都会调用
+    /// <c>Item.RPC_SetThrownData(int characterID, float thrownAmount)</c>（RpcTarget.All），
+    /// 第二个参数就是蓄力值：直接丢弃 = 0，蓄力扔出 &gt; 0。该 RPC 主客机都会执行，
+    /// 主机据此即可稳定区分两种行为，**不需要客机安装任何模组**。
+    ///
+    /// 判定与延迟销毁见 <see cref="HostClassManager.OnChaosEndermanItemDropped"/> / <see cref="HostClassManager.ProcessChaosPendingDropClears"/>。
+    /// </summary>
+    public static class ChaosEndermanDropClearPatch
+    {
+        /// <summary>对应 Item.RPC_SetThrownData(int characterID, float thrownAmount)。</summary>
+        public static void Prefix(Item __instance, int characterID, float thrownAmount)
+        {
+            try
+            {
+                if (!PhotonNetwork.IsMasterClient) return;
+                if (__instance == null) return;
+                if (HostClassManager.Instance == null) return;
+                if (!ModConfig.General.Enabled.Value || !ModConfig.ChaosEnderman.Enabled.Value) return;
+
+                var view = PhotonNetwork.GetPhotonView(characterID);
+                if (view == null) return;
+                var character = view.GetComponent<Character>();
+                if (character == null) return;
+
+                HostClassManager.Instance.OnChaosEndermanItemDropped(__instance, character, thrownAmount);
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogError($"[RollOfTheScout] 混乱末影人·处理丢弃事件时异常：{e.Message}");
             }
         }
     }
@@ -2121,6 +2364,95 @@ namespace RollOfTheScout.Patches
         {
             if (character == null) return "(null)";
             return string.IsNullOrEmpty(character.characterName) ? "(未命名)" : character.characterName;
+        }
+    }
+
+    /// <summary>
+    /// 捣蛋鬼·拾取变糖：拾取**可食用物品**时按概率替换为随机糖果；
+    /// 命中「拾取变糖黑名单」的物品（诡异菇 / 糖果本身 / 万灵药 / 潘多拉餐盒）不受影响。
+    ///
+    /// 与潘多拉 / 圣人 / 挑战者 / 迈尔斯残魂 / 区 / 太空人 / 混乱末影人 / 石像鬼 / 炼金术士共用
+    /// <c>Item.RequestPickup(PhotonView characterView)</c>（<c>[PunRPC]</c>，<c>RpcTarget.MasterClient</c>，
+    /// 只在主机执行）。只有这里能在销毁世界物品的同时跳过原版入包；
+    /// 糖果由主机销毁原物品后通过 <c>HostApi.GiveItemAsPickup</c> 按原版拾取落点发放。
+    ///
+    /// 性能：先做 O(1) 的职业判定与概率判定，只有「确属捣蛋鬼 + 可食用 + 未命中黑名单」时才解析糖果池；
+    /// 糖果池 / 黑名单的解析结果均在 <see cref="HostClassManager"/> 内按配置原文缓存。
+    /// </summary>
+    public static class TricksterPickupPatch
+    {
+        /// <summary>对应 Item.RequestPickup(PhotonView characterView)。</summary>
+        public static bool Prefix(Item __instance, PhotonView characterView)
+        {
+            try
+            {
+                if (!PhotonNetwork.IsMasterClient) return true;
+                if (__instance == null || characterView == null) return true;
+
+                var host = HostClassManager.Instance;
+                if (host == null) return true;
+                if (!ModConfig.General.Enabled.Value || !ModConfig.Trickster.Enabled.Value) return true;
+
+                var character = characterView.GetComponent<Character>();
+                if (character == null) return true;
+                if (host.GetClassOf(character) != ClassType.Trickster) return true;
+
+                var result = host.OnTricksterPickup(__instance, character, out string candyPrefab);
+                if (result == HostClassManager.TricksterPickupResult.Keep) return true;
+
+                // 先销毁世界物品，再把糖果按原版拾取落点发放；返回 false 跳过原版入包。
+                HostApi.ConsumePickedItem(__instance);
+
+                if (!string.IsNullOrEmpty(candyPrefab))
+                {
+                    if (!HostApi.GiveItemAsPickup(character, candyPrefab, out _))
+                    {
+                        HostApi.SpawnItemAtFeet(character, candyPrefab);
+                        Plugin.Log.LogWarning(
+                            $"[RollOfTheScout] 拾取变糖：{character.characterName} 的 {candyPrefab} 未能入包，已改为生成在脚下。");
+                    }
+                }
+
+                return false;
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogError($"[RollOfTheScout] 捣蛋鬼·处理拾取时异常：{e.Message}");
+                return true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 捣蛋鬼·【蛀牙】：食用棉花糖 / 大棒棒糖后自身 +损伤。
+    ///
+    /// 与转职 / 野人 / 待皓 / 太空人 / 榔王 / 混乱末影人共用 <c>Item.Consume(int consumerID)</c>
+    /// （<c>[PunRPC]</c>，食用者以 <c>RpcTarget.All</c> 广播，主机也收得到）。
+    /// <c>GlobalEvents.OnItemConsumed</c> 为兜底通道，两条通道由去重窗口保证只生效一次。
+    /// </summary>
+    public static class TricksterEatPatch
+    {
+        /// <summary>对应 Item.Consume(int consumerID)。</summary>
+        public static void Prefix(Item __instance, int consumerID)
+        {
+            try
+            {
+                if (!PhotonNetwork.IsMasterClient) return;
+                if (__instance == null) return;
+                if (HostClassManager.Instance == null) return;
+                if (!ModConfig.General.Enabled.Value || !ModConfig.Trickster.Enabled.Value) return;
+
+                var view = PhotonNetwork.GetPhotonView(consumerID);
+                if (view == null) return;
+                var character = view.GetComponent<Character>();
+                if (character == null) return;
+
+                HostClassManager.Instance.OnTricksterItemConsumed(__instance, character);
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogError($"[RollOfTheScout] 捣蛋鬼·处理食用事件时异常：{e.Message}");
+            }
         }
     }
 }

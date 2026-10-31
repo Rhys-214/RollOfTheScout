@@ -13,7 +13,7 @@ namespace RollOfTheScout
     /// 方案 B「仅主机安装即可游玩」职业模组入口。
     /// 主机执行完整职业逻辑；装有主模组的客机另通过共用组件处理本机残魂宝石结算。
     /// </summary>
-    [BepInPlugin(Guid, "RollOfTheScout", "1.0.0")]
+    [BepInPlugin(Guid, "RollOfTheScout", "1.1.0")]
     public class Plugin : BaseUnityPlugin
     {
         public const string Guid = "com.peakmodding.RollOfTheScout";
@@ -29,7 +29,7 @@ namespace RollOfTheScout
         /// 当前配置文件结构的版本标记。**每次改动 Section / Key 结构时都要改这个值**：
         /// 标记不一致时，旧 cfg 会被备份（.old-时间戳）并删除，由 BepInEx 重新生成默认文件。
         /// </summary>
-        private const string ConfigRevision = "2026-10-25-bilingual3";
+        private const string ConfigRevision = "2026-10-31-halloween-hat-1";
 
         /// <summary>
         /// 自动清理「旧结构」配置文件（在第一次 Bind 之前调用才有效：BepInEx 的 ConfigFile 是惰性加载的）。
@@ -138,6 +138,9 @@ namespace RollOfTheScout
             TryPatch("Player.AddItem (死灵法师·骸骨·魔盒变书)", addItem,
                 prefix: AccessTools.Method(typeof(NecromancerPickupPatch), nameof(NecromancerPickupPatch.Prefix)));
 
+            // 石像鬼·石化改挂 Item.RequestPickup（见下方与潘多拉共用的拦截点）：
+            // 本轮调整后石头在多数分支需要「直接消失」，只有 RequestPickup 能拿到世界物品实例并销毁。
+
             // 程序员·【溢出】：把「额外体力超过上限」的结果改为取模。
             // 挂原版 Character.AddExtraStamina(float)（非 [PunRPC]、签名稳定）。
             // 该方法受 view.IsMine 保护，只在拥有者客户端执行 —— 覆盖「主机自己的角色」；
@@ -184,6 +187,40 @@ namespace RollOfTheScout
                 // 同样共用 Item.RequestPickup 拦截点（Harmony 支持多 Prefix；玩家单一职业，不冲突）。
                 TryPatch("Item.RequestPickup (太空人·轻飘飘/飞起来)", requestPickup,
                     prefix: AccessTools.Method(typeof(AstronautPickupPatch), nameof(AstronautPickupPatch.Prefix)));
+
+                // 混乱末影人·混乱：拾取物品按概率直接消失，并强制对自己使用一次潘多拉餐盒。
+                // 同样共用 Item.RequestPickup 拦截点（Harmony 支持多 Prefix；玩家单一职业，不冲突）。
+                TryPatch("Item.RequestPickup (混乱末影人·混乱)", requestPickup,
+                    prefix: AccessTools.Method(typeof(ChaosEndermanPickupPatch), nameof(ChaosEndermanPickupPatch.Prefix)));
+
+                // 石像鬼·石化：食物变石头；拾取石头按概率消失并结算收益 / 化雕像。
+                // 必须挂 RequestPickup（而非 Player.AddItem），因为需要销毁世界物品。
+                TryPatch("Item.RequestPickup (石像鬼·石化)", requestPickup,
+                    prefix: AccessTools.Method(typeof(GargoylePickupPatch), nameof(GargoylePickupPatch.Prefix)));
+
+                // 炼金术士·等价交换 / 能量汲取：工具转化为随机物品、可食用物品直接销毁。
+                // 同样必须挂 RequestPickup：两者都要销毁世界物品。
+                TryPatch("Item.RequestPickup (炼金术士·等价交换/能量汲取)", requestPickup,
+                    prefix: AccessTools.Method(typeof(AlchemistPickupPatch), nameof(AlchemistPickupPatch.Prefix)));
+
+                // 捣蛋鬼·拾取变糖：可食用物品按概率替换为随机糖果（销毁原物品后发放糖果）。
+                // 同样共用 Item.RequestPickup 拦截点（Harmony 支持多 Prefix；玩家单一职业，不冲突）。
+                TryPatch("Item.RequestPickup (捣蛋鬼·拾取变糖)", requestPickup,
+                    prefix: AccessTools.Method(typeof(TricksterPickupPatch), nameof(TricksterPickupPatch.Prefix)));
+            }
+
+            // 混乱末影人·末影：直接丢弃曲迁菇 → 清除；蓄力扔出 → 正常生效。
+            // 两者靠原版 RPC_SetThrownData 的蓄力值区分（主机可判定，客机零安装）。
+            // 按名解析（与 Consume 同理：运行时 [PunRPC] 方法可能被 PEAKERRpcInfo 重写）。
+            var rpcSetThrownData = AccessTools.Method(typeof(Item), "RPC_SetThrownData");
+            if (rpcSetThrownData == null)
+            {
+                Log.LogWarning("[RollOfTheScout] 未找到 Item.RPC_SetThrownData，混乱末影人·末影的「丢弃清除」效果将不生效。");
+            }
+            else
+            {
+                TryPatch("Item.RPC_SetThrownData (混乱末影人·末影)", rpcSetThrownData,
+                    prefix: AccessTools.Method(typeof(ChaosEndermanDropClearPatch), nameof(ChaosEndermanDropClearPatch.Prefix)));
             }
 
             // 转职：食用指定物品（默认诡异菇）后更换职业。
@@ -223,6 +260,16 @@ namespace RollOfTheScout
                 // 同样共用 Item.Consume（Harmony 支持多 Prefix；玩家单一职业，不冲突）。
                 TryPatch("Item.Consume (榔王)", consume,
                     prefix: AccessTools.Method(typeof(LangwangEatPatch), nameof(LangwangEatPatch.Prefix)));
+
+                // 混乱末影人·末影：食用运动饮料 / 万灵药后 +损伤。
+                // 同样共用 Item.Consume（Harmony 支持多 Prefix；玩家单一职业，不冲突）。
+                TryPatch("Item.Consume (混乱末影人·末影)", consume,
+                    prefix: AccessTools.Method(typeof(ChaosEndermanEatPatch), nameof(ChaosEndermanEatPatch.Prefix)));
+
+                // 捣蛋鬼·蛀牙：食用棉花糖 / 大棒棒糖后 +损伤。
+                // 同样共用 Item.Consume（Harmony 支持多 Prefix；玩家单一职业，不冲突）。
+                TryPatch("Item.Consume (捣蛋鬼·蛀牙)", consume,
+                    prefix: AccessTools.Method(typeof(TricksterEatPatch), nameof(TricksterEatPatch.Prefix)));
             }
 
             // 旗手·执旗：检测「检查点旗标被插下」。

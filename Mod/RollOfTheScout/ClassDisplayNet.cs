@@ -80,10 +80,10 @@ namespace RollOfTheScout
         public const byte KindMilesGameplayState = 8;
 
         /// <summary>关键词 / 简介文本的保底重发间隔（秒）。仅为让中途加入的客机也能收到；文本是静态的，无需频繁发送。</summary>
-        public const float ClassTextResendSeconds = 30f;
+        public const float ClassTextResendSeconds = 10f;
 
         /// <summary>职业快照的保底重发间隔（秒）：保证中途加入的客机也能尽快收到，且实时跟随职业变动。</summary>
-        public const float SnapshotIntervalSeconds = 2f;
+        public const float SnapshotIntervalSeconds = 5f;
 
         // ---------------------------------------------------------------
         // 发送（仅主机）
@@ -136,7 +136,8 @@ namespace RollOfTheScout
         {
             if (!ShouldBroadcast()) return;
             if (actorNumber <= 0 || string.IsNullOrEmpty(text)) return;
-            Send(KindTargetedToast, actorNumber.ToString() + "\t" + Sanitize(text));
+            // 定向提示允许换行（中英双语两行）；只把会破坏「ActorNumber\t文本」解析的制表符替换掉。
+            Send(KindTargetedToast, actorNumber.ToString() + "\t" + SanitizeToast(text));
         }
 
         /// <summary>把 <c>"code=文本;…"</c> 形式的文本表发出。</summary>
@@ -162,6 +163,16 @@ namespace RollOfTheScout
         {
             if (string.IsNullOrEmpty(name)) return string.Empty;
             return name.Replace(';', '_').Replace('=', '_').Replace('\n', ' ').Replace('\r', ' ');
+        }
+
+        /// <summary>
+        /// 定向提示专用：保留换行（客户端只在**第一个** Tab 处切分 ActorNumber 与文本），
+        /// 仅替换制表符，避免破坏「ActorNumber\t文本」的解析。
+        /// </summary>
+        private static string SanitizeToast(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return string.Empty;
+            return text.Replace('\t', ' ');
         }
 
         /// <summary>广播一条职业效果提示（与主机左上角 Toast 文本一致）。</summary>
@@ -205,10 +216,15 @@ namespace RollOfTheScout
             try
             {
                 object[] payload = { ModId, kind, data };
-                PhotonNetwork.RaiseEvent(
+                bool sent = PhotonNetwork.RaiseEvent(
                     EventCode, payload,
                     new RaiseEventOptions { Receivers = ReceiverGroup.Others },
                     SendOptions.SendReliable);
+                if (!sent)
+                {
+                    Plugin.Log.LogWarning(
+                        $"[RollOfTheScout] 职业显示广播未被 Photon 接受（kind={kind}，payload={payload.Length} 段）。");
+                }
             }
             catch (System.Exception e)
             {

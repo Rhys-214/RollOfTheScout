@@ -6,17 +6,17 @@
 
 ## English
 
-Class introduction — applies to the **RollOfTheScout** mod, version **1.0.7** and above.
+Class introduction — applies to the **RollOfTheScout** mod, version **1.1.0** and above.
 
 1. **Explorer**
 - Keywords: Random items each level · One-time faint revive · High hunger drain · Periodic infinite sprint
-    - "Pioneer: a random-item backpack every level; your first faint fully clears debuffs as you revive; 【Hyper-metabolism】 forces you to keep managing hunger and sprints."
+    - "Pioneer: a random-item backpack every level; your first faint fully clears debuffs as you revive; *Hyper-metabolism* forces you to keep managing hunger and sprints."
 - 【Trailblazing】On entering each new level, automatically equips a backpack filled with 4 items; if you already carry a backpack, the old backpack and its contents are overwritten. The 4 items are drawn independently by weight from rope (weight 10; same below), piton (7), scout cookies (2), chain shooter (2), rescue hook (2) and anti-gravity cannon (1); duplicates are allowed.
 - 【Unbroken】On fainting, immediately clears all debuffs; once per run (independently per player).
 - 【Hyper-metabolism】Every 20 s, a fixed +2.5 hunger, which replaces the game's default natural hunger growth; every 40 s, one sprint (about 10 s — i.e. an energy drink, and when it ends 25 drowsiness is cleared).
 2. **Leader**
 - Keywords: Area buffs · Opening debt · Bound to everyone's life · Death-triggered rally · Extra mystery item
-    - "Team core: strong sustained area buffs; your curse and petrify swing with everyone's life and death; your death rallies everyone; while all are alive, opening an Ancient Idol yourself yields an extra item."
+    - "Team core: periodic strong area buffs that grant players extra stamina, heal injury, restore hunger and reduce drowsiness; your curse and petrify swing with everyone's life and death; your death rallies everyone; while all are alive, opening an Ancient Idol yourself yields an extra item."
 - 【Rally】Every 3 min, all players within 30 m (including yourself) gain +25 extra stamina, −5 injury, −10 hunger; every 1 min, all players within 20 m (including yourself) gain −30 drowsiness.
 - 【Revelation】While everyone is alive, opening an Ancient Idol additionally yields 1 mystery item; the item is placed into an empty slot of the Leader's inventory first, and when all 3 slots are full it is spawned next to the campfire instead, so it cannot roll down the mountain.
 - 【Holy】Whenever any player opens an Ancient Idol, the Leader's state is adjusted to the number of players present: for each death, the Leader gains +5 curse and +10 petrify (inherited); for each living player, the Leader gains −2.5 curse (by default the Leader themself is not counted as a living player).
@@ -63,10 +63,10 @@ Class introduction — applies to the **RollOfTheScout** mod, version **1.0.7** 
 - 【Tolerance】Every 10 s, −5 of the specific debuffs (injury, poison, spores, thorns, heat, cold).
 10. **Scout**
 - Keywords: Starting random fanny pack · Solo bleeding · Group action · Companion buffs
-    - "Better together: starts with a random-item fanny pack; alone you bleed and starve; you need company to ease it; strengthened bond with fellow Scouts and Leaders."
+    - "Better together: starts with a random-item fanny pack; alone you bleed and starve; you need company to ease it; strengthened bond with fellow Scouts or Leaders."
 - 【Luggage】Starts by default with a fanny pack containing 2 random items (distinct).
 (item pool: scout cookies, big lollipop, airplane meal, hot dog sausage, marshmallow, mixed nuts, oatmeal bar, yellow snowberry, red crispberry, yellow banana berry, tiny egg, energy drink, sports drink, rope, milk-white gold, bandage, first-aid kit, balloon, bunch of balloons, glider, auto parachute, sun umbrella, glow stick, lantern, pirate compass, telescope, basketball, compass, frisbee, torch, stone, passport, bingbong)
-- 【Collective】By default, every 20 s +2.5 injury and +2.5 hunger; when another player (with no Scout or Leader) is within 15 m, every 20 s −2.5 injury and every 50 s −2.5 hunger; when another Scout or Leader is within 15 m, every 15 s −2.5 injury and every 30 s −2.5 hunger.
+- 【Collective】By default, every 20 s +2.5 injury and +2.5 hunger; when another player (with no Scout or Leader) is within 25 m, every 20 s −2.5 injury and every 50 s −2.5 hunger; when another Scout or Leader is within 25 m, every 15 s −2.5 injury, and every 30 s −2.5 hunger and +5 extra stamina.
 11. **StandardBearer**
 - Keywords: Checkpoint flag · Area debuff purge on plant · Self petrify on plant · Random team buffs · Team burst
     - "Team standard-bearer: a checkpoint flag every level; planting it immediately clears debuffs in range and 3 s later grants everyone random buffs; each plant adds petrify to yourself."
@@ -140,7 +140,7 @@ Class introduction — applies to the **RollOfTheScout** mod, version **1.0.7** 
 19. **Pacifist**
 - Keywords: Kick replaces grab · Hits restore stamina · Misses cause drowsiness · Starting curse
     - "Not so peaceful: the right-click grab becomes a kick; kicking a player grants extra stamina, missing adds drowsiness; starts with curse."
-- 【Peace?】Starts with 20 curse; your right-click grab becomes a kick; each time you kick a player you gain +2.5 extra stamina, and if the kick misses a player you lose −2.5 extra stamina and gain +20 drowsiness.
+- 【Peace?】Starts with 20 curse; your right-click grab becomes a kick; each time you kick a player you gain +5 extra stamina, and if the kick misses a player you lose −5 extra stamina and gain +20 drowsiness.
 20. **Hamster**
 - Keywords: Starting backpack · Item hoarding · Load reward · Periodic sprint · Extra stamina
     - "Carrying the weight: starts with a backpack; once your load passes the threshold you periodically gain a sprint and extra stamina."
@@ -218,21 +218,49 @@ Class introduction — applies to the **RollOfTheScout** mod, version **1.0.7** 
 - 【Overflow】The more extra stamina you have, the less extra stamina you have: whenever your extra stamina increases, if (current extra stamina + this increase) > 100, your extra stamina becomes (current extra stamina + increase) mod 100 (e.g. when you have 95 extra stamina and eat a food that would add 10 extra stamina, your extra stamina becomes 5).
 - 【Night Owl】Every 60 s a check runs: if it is night, you gain one energy drink effect, and when it ends the drowsiness it caused is not additionally cleared.
 - 【Cheat】Every 10 s a check runs: if no other player is within 30 m, one random debuff of yours is reduced by −2.5 (injury, spores, poison, sleep, cold, heat included); every 3 min a check runs: if you have no debuff (injury, spores, poison, sleep, cold, heat) and no insect BUG (tick, scorpion, early bug) in your inventory, you gain one random non-debuff class effect of a random player present, which stays active for 3 min until the next check.
+31. **Chaos Enderman**
+- Keywords: Teleport · Warp Fungus · Negative statuses · Periodic checks
+    - "Chaos Teleport: periodically checks your own status; if the selected negative status increases, swap positions with a random other player; otherwise gain a Warp Fungus; picked-up items may vanish outright and trigger Pandora; sports drinks and Cure-All punish you, and touching water randomly teleports you again; hoarding Warp Fungi is punished."
+- 【Teleport】Every 30 s, records all your current (negative) status values and compares the selected negative status with the previous record. If that status increased, you swap positions with a random other player (the selected status changes every 150 s; the pool is injury, heat, cold, poison, spores, thorns, drowsiness, curse, petrify and arrow); otherwise you gain 1 Warp Fungus (placed into an empty inventory slot; when all slots are full, you gain nothing).
+- 【Chaos】Each pickup has a 50% chance to vanish directly and forcibly use one Pandora's lunchbox on yourself (by default some special items are exempt: glow mushroom, Warp Fungus, Pandora's lunchbox, signal stick, strange crystal, the Scout's perseverance, initiative, hospitality and ambition, and the Scout's glory).
+- 【Ender】Each time you eat a sports drink or Cure-All, +20 injury; on death, 1 Warp Fungus spawns at the corpse; every 5 s: in water (e.g. the water bodies of Shore, Tropics and Swamp) you gain +10 injury and are immediately teleported to a random player; when the total Warp Fungi in your inventory and equipped backpack is greater than 1, you gain +20 drowsiness. If you directly discard a Warp Fungus it vanishes immediately (cleared); if you throw it with charge it behaves normally.
+32. **Gargoyle**
+- Keywords: Petrify · Stones · Dynamic buffs · Pickup conversion · Random effects · Area guard
+    - "Living statue: standing still builds petrify and moving slowly sheds it; the higher your petrify, the stronger your buffs; when petrify is low, daylight adds drowsiness; when petrify peaks within a cycle you are forced to break the shell, triggering a one-time powerful buff that also affects those around you; food you pick up turns to stone, and stones may bring random buffs."
+- 【Stone Body】Starts with 40 petrify. Every 5 s it records and compares your position: moving less than 1 m since the previous check adds 5 petrify (cap 80; no increase once at the cap), otherwise petrify −1. Every 10 s: if petrify ≥30, −25 drowsiness; if ≥50, additionally +5 extra stamina, −30 poison and −30 spores; if ≥70, additionally −2.5 hunger, −50 cold and −50 heat; if ≥80, additionally one invincibility.
+- 【Petrify】While your petrify is ≥30, picking up an edible item always turns it into a stone (Mushroom Glow, Cure-All and Pandora's lunchbox are exempt). Each time you pick up a stone, roll: 30% no change; 30% the stone disappears, +5 petrify, −5 injury and +10 extra stamina; 30% the stone disappears, +5 petrify, −10 hunger and one sprint (its drowsiness is not cleared when it ends); 7.5% the stone disappears, clear your debuffs (except curse and petrify) and gain one invincibility; 2.5% a special roll happens — if petrify ≥50 but <70, +5 curse and petrify −100 and the stone becomes a Scout statue; if petrify ≥70, petrify −100 and the stone becomes a Scout statue; otherwise nothing happens.
+- 【Shell Break】Every 20 s, if petrify >80: petrify −100, one invincibility, one sprint and one infinite stamina; every player within 15 m (including yourself) −100 drowsiness and +20 extra stamina; this effect has a 180 s trigger cooldown.
+- 【Light Shy】Every 10 s: during daytime and while your petrify is <30, +15 drowsiness; if drowsiness ≥50, +2.5 injury and +10 petrify.
+- 【Guardian】Every 60 s, if petrify ≥60, every player within 20 m (excluding yourself) −5 injury and gains one invincibility.
+33. **Alchemist**
+- Keywords: Tool transmutation · Random debuff · Food conversion · Forced periodic refining · Carrying taboo
+    - "Equivalent alchemy: picked-up tools gain a random debuff and are turned into random items; picked-up edible items are converted into debuff relief and extra stamina, with a special reward every 7 triggers; every 12 stones refined triggers one special powerful transmutation; carrying a player turns them into a skeleton, or refines them into a corpse."
+- 【Equivalent Exchange】Picking up a tool item (rope, piton, rope gun, chain shooter, rescue hook, anti-gravity rope, anti-gravity rope gun, anti-gravity cannon, bandages, first-aid kit, antidote, balloon, dynamite, lantern, candle, magic bean, scout cannon, portable stove, heat pack, sunscreen, parasol, glider, parachute, binoculars, compass, pirate compass) adds +7.5 to one random negative status (injury / hunger / poison / spores / heat / cold / cobweb / curse / petrify; petrify rounds down to +7) and turns the tool into another random item (30% stone; 25% medicinal root / magic bean; 15% rope / energy drink / sports drink; 10% piton / rope gun / chain shooter / scout cannon / rescue hook; 7.5% balloon / bunch of balloons; 5% anti-gravity rope / anti-gravity rope gun / anti-gravity cannon / mandrake; 3% Pandora's lunchbox; 2.5% dynamite / strange crystal; 1% Scout statue; 1% Ancient Doll); this effect has a 5 s trigger cooldown.
+- 【Energy Drain】Picking up an edible item (except glow mushroom, sports drink, medicinal root, mandrake, Pandora's lunchbox and Cure-All; aloe vera counts as edible) destroys it immediately, reduces all your negative statuses by 2.5 (petrify by 3) and grants +5 extra stamina; this effect has a 3 s trigger cooldown; every 7 triggers a bonus roll: 50% Cure-All, 40% Pandora's lunchbox, 10% dynamite (empty inventory slot first, otherwise the main hand).
+- 【Philosopher's Stone】Every 12 stones gained through 【Equivalent Exchange】 triggers one special roll on the 12th stone: 25% Scout statue, 10% Ancient Doll, 5% one of the five Scout gems, 60% the stone vanishes, all your negative statuses are cleared, +100 extra stamina and one invincibility.
+- 【Forbidden Alchemy】When carrying another player: 70% turns that player into a skeleton and gives you +20 curse; otherwise a Cursed Skull is forced on that player and a zombie spawns in place.
+34. **Trickster**
+- Keywords: Periodic area candy · Trick on full inventories · Pickup conversion · Sugar penalty
+    - "Halloween knocker: candy to players in range on a timer, granting you extra stamina when it lands; a full inventory gets tricked — one item is snatched or Pandora strikes repeatedly; edible pickups turn into candy, but eating candy costs injury from cavities."
+- 【Sugar】Every 120 s, every other player within 30 m receives 1 random candy (placed into an empty item slot): mixed nuts (weight 5, same below) / marshmallow (3) / big lollipop (1); each player who successfully receives candy grants you +5 extra stamina. Edible pickups are replaced by a random candy (glow mushroom / mixed nuts / marshmallow / big lollipop / Cure-All / Pandora's lunchbox are exempt).
+- 【Trick】If an affected player's inventory is full when 【Sugar】 triggers, they receive no candy; instead they gain +15 drowsiness and one special roll: 70% one random item from their inventory is transferred to the Trickster (the item is destroyed at their end first, then given to the Trickster — empty item slot first, otherwise the equipped backpack / fanny pack, and if both are full it is spawned at the Trickster's feet; multiple transfers are queued 1 s apart); 30% the player is hit with 3 Pandora effects in a row (1 s apart). Each affected player also gives the Trickster +5 drowsiness.
+- 【Cavity】Each time you eat marshmallow or big lollipop, +2.5 injury.
 
 ---
 
 ## 中文
 
-职业介绍·适用于模组童子军的命运之骰RollOfTheScout的v1.0.7版本及以上：
+职业介绍·适用于模组童子军的命运之骰RollOfTheScout的 v1.1.0 版本及以上：
+
 1. **先驱**
 - 关键词：每关随机道具、一次性昏迷复活、高饥饿消耗、无限周期加速
-    - “开路先锋：每关获得随机道具背包；首次昏迷将完全清除负面复活；【高代谢】迫使你不断管理饥饿与冲刺”
+    - “开路先锋：每关获得随机道具背包；首次昏迷将完全清除负面复活；*高代谢*迫使你不断管理饥饿与冲刺”
 - 【开路】每次进入新关卡时，自动装备一个装满4件物品的背包；如果原本背着背包，旧背包连同内容物会一起被覆盖。背包内物品在绳索（权重10，后同）、岩钉（7）、童军饼干（2）、锁链发射器（2）、救援抓钩（2）、反重力炮（1）中按各自权重独立随机抽取，允许重复
 - 【不屈】昏迷时立即清除所有负面状态，每局仅一次（各玩家独立）
 - 【高代谢】每20秒固定+2.5饥饿值，并取代游戏默认的自然饥饿增长；每40秒获得一次加速，加速时长约10秒（即能量饮料，且加速结束时会清除掉25困倦）
 2. **领袖**
 - 关键词：范围增益、开局负债、绑定全员生死、亡语激励、额外神秘物品
-    - “团队核心：持续强力范围增益；自身诅咒石化随全员生死波动；自身死亡触发全员激励；全员存活时，自己开启雕像可获额外物品”
+    - “团队核心：周期强力范围增益，使玩家获得额外体力、治疗损伤、补充饥饿、减少困倦；自身诅咒石化随全员生死波动；自身死亡触发全员激励；全员存活时，自己开启雕像可获额外物品”
 - 【号召】每3分钟为半径30米内的所有玩家（包括自己）+25额外体力、-5损伤、-10饥饿；每1分钟为半径20米内所有玩家（包括自己）-30困倦
 - 【神启】全员存活时开启古老雕像可额外获得1件神秘物品；物品会优先放进领袖的物品栏空位，当3个物品栏都满时改为在篝火旁固定生成，避免滚落山下
 - 【圣洁】任何玩家开启古老雕像时，都会按当时人数情况调整领袖的状态：每死亡1人，领袖+5诅咒、+10石化（会继承）；每有1人存活，领袖-2.5诅咒（存活人数默认配置不把领袖本人算在内）
@@ -279,10 +307,10 @@ Class introduction — applies to the **RollOfTheScout** mod, version **1.0.7** 
 - 【耐受】每10秒-5特定负面状态（损伤、中毒、孢子、荆棘、炎热、寒冷）
 10. **童军**
 - 关键词：开局随机物资腰包、独行流血、集体行动、同伴增益
-    - “结伴而行：开局自带随机物资腰包；落单独行持续流血与饥饿；需和玩家结伴同行缓解，与同职业【童军】与【领袖】有加强羁绊”
+    - “结伴而行：开局自带随机物资腰包；落单独行持续流血与饥饿；需和玩家结伴同行缓解，与同职业【童军】或【领袖】有加强羁绊”
 - 【行李】开局初始默认装备一个滑稽背包，滑稽背包中会有2个随机物品（不重复）
 （物品池：童军饼干、大棒棒糖、飞机餐、热狗肠、棉花糖、混合坚果、燕麦棒、黄雪莓、红脆莓、黄莓蕉、小小蛋、能量饮料、运动饮料、绳索、奶白金、绷带、急救箱、气球、一束气球、滑翔伞、自动降落伞、太阳伞、照明棒、提灯、海盗罗盘、望远镜、篮球、罗盘、飞盘、火炬、石头、护照、宾邦）
-- 【集体】默认每20秒+2.5损伤、+2.5饥饿；自身半径15米内有其他玩家（无童军或领袖）时，每20秒-2.5损伤、每50秒-2.5饥饿；自身半径15米内有其他童军或领袖时，每15秒-2.5损伤、每30秒-2.5饥饿
+- 【集体】默认每20秒+2.5损伤、+2.5饥饿；自身半径25米内有其他玩家（无童军或领袖）时，每20秒-2.5损伤、每50秒-2.5饥饿；自身半径25米内有其他童军或领袖时，每15秒-2.5损伤、每30秒-2.5饥饿、+5额外体力
 11. **旗手**
 - 关键词：检查点旗标、插旗范围清负、自身插旗石化、全员随机增益、团队爆发
     - “团队旗手：每关获得检查点旗标；自身插旗立即范围清除负面，三秒后全员获得随机增益效果；自身每次插旗增加石化”
@@ -356,7 +384,7 @@ Class introduction — applies to the **RollOfTheScout** mod, version **1.0.7** 
 19. **和平主义者**
 - 关键词：踢击替代拉人、踢中回体、踢空困倦、初始诅咒
     - “并非和平：右键拉人变为踢人；踢中玩家获得额外体力，踢空加困倦；开局自带诅咒”
-- 【和平？】开局初始自带20诅咒；右键的拉人变为踢人动作；每踢中一次玩家+2.5额外体力，若踢人未踢中玩家则-2.5额外体力、+20困倦
+- 【和平？】开局初始自带20诅咒；右键的拉人变为踢人动作；每踢中一次玩家+5额外体力，若踢人未踢中玩家则-5额外体力、+20困倦
 20. **仓鼠**
 - 关键词：开局背包、物品囤积、负重奖励、周期加速、额外体力
     - “负重前行：开局自带背包；负重过半达标后，周期获得加速与额外体力”
@@ -434,3 +462,30 @@ Class introduction — applies to the **RollOfTheScout** mod, version **1.0.7** 
 - 【溢出】额外体力越多，额外体力越少：每当自身额外体力增加时，如果 (已有额外体力+本次额外体力增加量)>100，那么额外体力将变为 (已有额外体力+增加量) mod 100（例如当你额外体力为95时，吃下一个本来会增加10额外体力的食物，那么你的额外体力会变成5）
 - 【熬夜】每60秒检测一次，如果时间为晚上，获得一次能量饮料效果，且结束后不额外消除因此产生的困倦
 - 【开挂】每10秒检测一次，如果自身半径30米内没有其他玩家，就使自身任意一个随机负面状态-2.5（包括损伤、孢子、中毒、睡眠、寒冷、炎热）；每3分钟检测一次，若自身没有任何负面状态（损伤、孢子、中毒、睡眠、寒冷、炎热）且物品栏中没有任意昆虫BUG（蜱虫、蝎子、早起虫儿），则获得在场随机一名玩家当前职业的随机一个非负面职业效果，持续有效3分钟直至下一次检测
+31. **混乱末影人**
+- 关键词：传送、曲迁菇、负面状态、周期检测
+    - “混乱传送：周期检测自身状态，若特定负面状态增加则与随机一名其他玩家互换位置，否则获得曲迁菇；拾取物品较高概率直接消失并触发潘多拉；饮用运动饮料与万灵药有惩罚，接触地图水体还会额外随机传送；积攒曲迁菇有惩罚”
+- 【传送】每30秒检测、记录自身当前所有（负面）状态值并比对上一次记录的状态值，若检测到某特定（负面）状态相比上一次检测有增加，则与随机一名其他玩家互换位置（检测的特定状态每150秒更换一种，检测状态池有损伤、炎热、寒冷、中毒、孢子、荆棘、困倦、诅咒、石化、箭），否则获得一个曲迁菇（优先放入空物品栏，已满则不获得）
+- 【混乱】拾取物品时，有50%概率物品直接消失，并强制对自身使用一次潘多拉餐盒（默认部分特殊物品不受影响：诡异菇、曲迁菇、潘多拉餐盒、信号棒、奇怪水晶、童军的毅力、童军的进取、童军的盛情、童军的野心、童军的荣耀）
+- 【末影】每次食用运动饮料或万灵药后，+20损伤；死亡时，在尸体处生成一个曲迁菇；每5秒检测一次：若自身处于水中（如海滩、森蕈、雾沼的水体），+10损伤，并立即传送随机一名玩家处；若自身物品栏与装备的背包中曲迁菇总数量＞1，+20困倦；自身直接丢弃曲迁菇时，该曲迁菇会立即消失（被清除），蓄力扔出则正常生效
+32. **石像鬼**
+- 关键词：石化、石头、动态增益、拾取转化、随机效果、范围守护
+    - “活体石像：站立不动会持续积蓄石化，移动则缓慢消退；自身石化越高，增益效果越强；若石化偏低，白天会畏光叠加困倦；周期内石化达到峰值时会强制破壳，触发一次性强力增益，且能影响周围；拾取食物会变石头，而石头可能带来随机增益”
+- 【石躯】开局初始自带40石化；每5秒记录、检测一次位置，若相比上一次检测位移距离＜1米，+5石化（上限80，达到上限不再触发增加），否则-1石化；每10秒检测一次，若石化≥30，-25困倦；若石化≥50，再+5额外体力、-30中毒、-30孢子；若石化≥70，再-2.5饥饿、-50寒冷、-50炎热；若石化≥80，再获得一次无敌效果
+- 【石化】拾取食物物品时，若自身石化≥30，则必定将食物变为石头（诡异菇、万灵药、潘多拉餐盒不受影响）；每次拾取石头时，30%概率无变化，30%概率石头消失并使自身+5石化、-5损伤、+10额外体力，30%概率石头消失并使自身+5石化、-10饥饿、获得一次加速效果（效果结束不清除困倦），7.5%概率石头消失并清除自身的负面状态（诅咒与石化除外）并使自身获得一次无敌效果，2.5%概率进行一次特殊判定：若自身石化≥50但＜70，则使自身+5诅咒、-100石化并使石头变化为童军雕像；若自身石化≥70，则使自身-100石化并使石头变化为童军雕像；其余情况无效果
+- 【破壳】每20秒检测一次，若石化＞80，则-100石化、获得一次无敌效果、加速效果、无限体力效果，并使自身半径15米内的所有玩家（包括自己）-100困倦、+20额外体力；该效果有180秒触发冷却
+- 【畏光】每10秒检测一次，若当前时间为白天，且自身石化＜30，则+15困倦；若困倦≥50，则+2.5损伤、+10石化
+- 【守护】每60秒检测一次，若石化≥60，使自身半径20米内所有玩家（不包括自己）-5损伤，并获得一次无敌效果
+33. **炼金术士**
+- 关键词：工具转化、随机负面、食物炼化、周期强力炼制、背人炼成
+    - “等价炼成：拾取工具时获得随机负面并转化为随机物品；拾取可食用物品会转化为负面清除与额外体力，每7次会有特殊奖励；每炼制出12石头将触发一次特殊强力炼制；背起玩家会将其变为骷髅，或将其炼化为尸”
+- 【等价交换】拾取工具物品（绳索、岩钉、绳索炮、锁链发射器、救援抓钩、反重绳索、反重绳索炮、反重力炮、绷带、急救箱、解毒剂、气球、炸药、提灯、烛台、魔豆、童子军大炮、便携烤炉、暖宝宝、防晒喷雾、太阳伞、滑翔伞、自动降落伞、望远镜、罗盘、海盗罗盘）时，+7.5随机负面状态（状态池：饥饿、损伤、中毒、孢子、炎热、寒冷、蛛网、诅咒、石化；石化向下取整为+7），并使工具变为其他的随机物品（30%为石头，25%为药用根茎/魔豆，15%为绳索/能量饮料/运动饮料，10%为岩钉/绳索炮/锁链发射器/童子军大炮/救援抓钩，7.5%为气球/一束气球，5%为反重绳索/反重绳索炮/反重力炮/曼德拉草，3%为潘多拉餐盒，2.5%为炸药/奇怪水晶，1%为童军雕像，1%为古老玩偶）；该效果有5秒触发冷却
+- 【能量汲取】拾取可食用物品（诡异菇、运动饮料、药用根茎、曼德拉草、潘多拉餐盒、万灵药除外；芦荟也算可食用）时，会直接将其销毁，并使自身所有负面状态-2.5（石化-3）、+5额外体力；该效果有3秒触发冷却；每触发7次进行一次特殊判定：50%概率获得一瓶万灵药，40%概率获得一个潘多拉餐盒，10%概率获得一个炸药（优先放入空物品栏，已满则直接塞主手）
+- 【贤者之石】每累计通过【等价交换】获得12个石头，对第12个石头触发一次特殊判定：25%概率变为童军雕像，10%概率变为古老玩偶，5%概率变为童军的毅力/进取/盛情/野心/荣耀之一，60%概率石头消失并清空自身所有负面状态、+100额外体力、获得一次无敌效果
+- 【禁忌炼成】背起其他玩家时，70%概率将该玩家转换为骷髅并使自身+20诅咒，其余概率使该玩家强制使用诅咒头骨并原地生成一个僵尸
+34. **捣蛋鬼**
+- 关键词：周期范围发糖、满物品栏捣蛋、拾取转化、吃糖惩罚
+    - “万圣敲门：定时给范围内的玩家发糖，成功使自身获得额外体力；若对方物品栏已满则捣蛋：随机抢走一件物品或连施潘多拉；拾取食物会变糖，但吃糖有蛀牙的损伤惩罚”
+- 【发糖】每120秒，使自身半径30米内的所有玩家（不包括自己）获得一个随机糖果（放入空物品栏）：混合坚果（权重5，后同）/棉花糖（3）/大棒棒糖（1）；每成功使一名玩家获得糖果，自身+5额外体力；拾取可食用物品会替换为随机糖果（诡异菇、混合坚果、棉花糖、大棒棒糖、万灵药、潘多拉餐盒不受影响）
+- 【捣蛋】若【发糖】触发时受影响的玩家物品栏已满，则不再使其获得糖果，改为使其+15困倦，并进行一次特殊判定：70%概率将该玩家物品栏中的随机一个物品转移至捣蛋鬼自身（玩家处的该物品销毁，再优先放入捣蛋鬼空物品栏，已满则放入其背包 / 滑稽背包，都已满则在其脚下生成；多次转移按1秒间隔依次发放），30%概率为该玩家连续施加3次潘多拉效果（间隔1秒）；每影响一名玩家，自身+5困倦
+- 【蛀牙】每次食用棉花糖或大棒棒糖后，+2.5损伤

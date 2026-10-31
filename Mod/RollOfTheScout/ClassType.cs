@@ -1,7 +1,7 @@
 namespace RollOfTheScout
 {
     /// <summary>
-    /// 主机侧职业类型。当前共 30 个职业。
+    /// 主机侧职业类型。当前共 33 个职业。
     /// 该枚举只存在于主机内存中，不会写入 Photon 自定义属性（客户端零安装，无接收方）。
     /// </summary>
     public enum ClassType
@@ -36,6 +36,10 @@ namespace RollOfTheScout
         Qu = 27,          // 区（！？区区？！ / 分解者 / 区块链 / 好多区 / 区毒不食子）
         Astronaut = 28,   // 太空人（轻飘飘 / 飞起来 / 太空食品安全 / 我去，老美的NASA这么厉害）
         Langwang = 29,    // 榔王（精品大果 / 上瘾 / 纤维化 / 没吃的赶紧戒）
-        Programmer = 30   // 程序员（BUG / 溢出 / 熬夜 / 开挂）
+        Programmer = 30,  // 程序员（BUG / 溢出 / 熬夜 / 开挂）
+        ChaosEnderman = 31, // 混乱末影人（混乱传送 / 混乱 / 末影）
+        Gargoyle = 32,     // 石像鬼（石躯 / 石化 / 破壳 / 畏光 / 守护）
+        Alchemist = 33,    // 炼金术士（等价交换 / 能量汲取 / 贤者之石 / 禁忌炼成）
+        Trickster = 34     // 捣蛋鬼（发糖 / 捣蛋 / 蛀牙）
     }
 }

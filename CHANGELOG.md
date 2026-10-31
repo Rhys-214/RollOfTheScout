@@ -294,3 +294,45 @@
 - **修复** 部分客机上左上角提示窗口高度不足，导致中英双语两行提示被裁成「英文只露下半、中文只露上半」。
     - 根因：原生 TMP 字体叠加层不可用时会走 IMGUI 回退绘制，而该路径把**每一条提示**都按固定单行高度绘制。一条提示本身可能含换行（英文 + 中文两行），在窄屏上还可能继续折行；配合垂直居中，超高的文本就被上下对称裁掉。窗口背景高度也有同样缺陷。
     - 现在逐条用 `GUIStyle.CalcHeight` 测量实际排版高度，窗口高度取各条实际高度之和；同时启用自动折行，并取消回退文本的加粗（与原生叠加层一致）。原生 TMP 路径本就会按整段文本测量，无需改动。
+
+## 1.1.0 - Halloween Update
+
+### English
+
+- **New** **Chaos Enderman (混乱末影人)**, **Gargoyle (石像鬼)**, **Alchemist (炼金术士)** and **Trickster (捣蛋鬼)** classes. Class details (keywords, effects and values) are documented in **ModClassIntroduction.md** bundled with the mod package; this changelog only lists what was added.
+- **Fixed** Older client addons (e.g. 1.0.6) could show class codes 31 / 32 as `None · 无职业`, and their class-intro panel could be missing or incomplete.
+    - Root cause: the addon's local text tables stop at code 30, while the host only resent class name / keywords / intro when the class-code set changed or every 30 s, so a client joining after the first send got nothing until the next resend.
+    - Fix: the host now tracks a `(player, class code)` snapshot hash and resends Kind 3 / 4 / 5 immediately on any change; Kind 3 is sent with every 5 s snapshot and the fallback interval is 10 s. The event format is unchanged, so older addons need no update.
+- **Changed** Explorer / Leader class-intro summaries (class document + in-game panel, Chinese / English); effects are unchanged, only the intro text was improved.
+- **Changed** Pacifist 【Peace?】: a successful kick grants +5 extra stamina (was +2.5); a missed kick deducts 5 extra stamina (was 2.5) and still adds 20 drowsiness. Defaults `PeaceKickExtraStamina和平？-踢中体力` / `PeaceMissDeductStamina和平？-未中扣体力` are now 0.05.
+- **Changed** Scout 【Collective】: radius 15 → 25 m; with another Scout / Leader nearby, the 30 s hunger settlement also grants +5 extra stamina (new key `CollectiveScoutExtraStamina集体-童军额外体力`, 0.05). The intro summary now says "fellow Scouts **or** Leaders".
+- **Fixed** Reclassing could bring the previous class's initial curse / petrify back after the status clear.
+    - Root cause: `ApplyClassChange` cleared statuses but did not cancel the old class's still-pending absolute write-back corrections (`_initialCurse` / `_petrifyRestores`), which kept re-writing their target for up to ~20 s.
+    - Fix: those pending entries are removed before `ClearAllNegativeStatuses`; the new class's initial status is then registered by `EnsureInitialStatuses` as usual.
+- **New** `[General] halloweenPumpkinHat万圣节-南瓜头` (host-only, **disabled by default**): when enabled, every player's hat in the room is forced to the pumpkin head (hat ID 27), including the airport lobby as well as players joining mid-session or leaving and rejoining; when disabled, each player's recorded original hat is restored. Toggling the option has a built-in **60-second cooldown**: changes made during the cooldown are ignored outright (they are not queued to apply later), so toggle once more after the cooldown ends. Performing the **Shrug** emote (`A_Scout_Emote_Shrug`) switches that player's hat between the originally recorded hat and the pumpkin head; this shrug toggle has a per-player **30-second** cooldown, and during the cooldown no check or decision is performed and nothing is queued. Original hats are tracked by Steam user id, so a rejoin keeps the same original; the effect re-checks once per second while active to recover from client-side customization syncs. Each affected player receives a targeted bilingual notice — **"Happy Halloween!"** on the first line and **"万圣节快乐！"** on the second — the first time their hat is refreshed while the option is enabled. Host-only, no client install needed.
+- **Fixed** MilesSoul 【Rule Zero】(feeding Perseverance to a downed player): the petrify added by that use is supposed to be cleared, but two edge cases could break it.
+    - Root cause 1: the 3-second correction window could expire before the owner / host had synced the cost, leaving the increase in place. In addition, if the value never returned to the baseline, the pending entry was never removed, which could keep suppressing later petrify gains indefinitely.
+    - Root cause 2: when the pre-use petrify snapshot was missing (patch not applied / feed target not resolved), the code silently used the post-cost value as the baseline, so nothing was effectively cleared.
+    - Fix: the correction window now always ends and cleans up; if the value did not return in time, the extra stamina is granted once as a fallback and a warning is logged. A missing pre-use snapshot is now logged and the cancellation is skipped instead of pretending to succeed. Fixed both in the host fallback path and in the shared client-side settlement (`Shared/MilesSoulLocal.cs`, shipped in main mod client mode and addon 1.0.7). Protocol unchanged.
+    - Compatibility: clients still running main mod 1.0.9 or addon 1.0.6 keep their own older local-settlement code; upgrading the addon to 1.0.7 (or using the main mod's client mode) is required to get this fix.
+- **Note** Class count is now 34. The config structure has changed, so `ConfigRevision` was bumped (currently `2026-10-31-halloween-hat-1`): an existing `com.peakmodding.RollOfTheScout.cfg` is backed up to `.old-<timestamp>` and regenerated on first launch.
+
+### 中文
+
+- **新增** 职业**混乱末影人**、**石像鬼**、**炼金术士**、**捣蛋鬼**，详见（模组包中附带的）职业介绍文档**ModClassIntroduction.md**；本更新日志只列出新增内容，不介绍具体职业效果。
+- **修复** 旧版附属模组（如 1.0.6）可能会把职业码 31 / 32 显示成 `None · 无职业`，以及职业介绍板块缺失未正常显示的问题。
+    - 根因：附属模组本地文案表只覆盖到职业码 30，而主机只在职业码集合变化时或每 30 秒才重发职业名 / 关键词 / 简介，首次广播之后加入的客机拿不到文本，只能等下一次重发。
+    - 修复：主机新增 `(玩家, 职业码)` 快照哈希，任何变化都立即重发 Kind 3 / 4 / 5；Kind 3 随每次快照发送（每 5 秒），保底间隔改为 10 秒。事件格式不变，旧附属模组无需更新。
+- **调整** 先驱 / 领袖职业简介（文档 + 游戏内板块，中英双语）；实际效果未变，仅优化介绍文本。
+- **调整** 和平主义者【和平？】：踢中玩家 +2.5 → +5 额外体力，踢空 -2.5 → -5 额外体力、+20 困倦。配置项 `PeaceKickExtraStamina和平？-踢中体力` / `PeaceMissDeductStamina和平？-未中扣体力` 默认值改为 0.05。
+- **调整** 童军【集体】半径 15 → 25 米；有童军 / 领袖同伴时 30 秒饥饿结算同时 +5 额外体力（新增 `CollectiveScoutExtraStamina集体-童军额外体力`，0.05）。简介改为「与同职业【童军】**或**【领袖】」。
+- **修复** 转职后旧职业的初始诅咒 / 石化可能被写回。
+    - 根因：`ApplyClassChange` 清除状态时未取消旧职业仍在排队的绝对写回校正（`_initialCurse` / `_petrifyRestores`），它们会在约 20 秒内反复把目标值写回。
+    - 修复：在 `ClearAllNegativeStatuses` 之前先移除这些条目；新职业的初始状态随后仍由 `EnsureInitialStatuses` 正常登记并施加。
+- **新增** 通用配置项 `万圣节-南瓜头`（`halloweenPumpkinHat`，仅主机生效，**默认关闭**）：开启后，房间内所有玩家的头饰被强制换成南瓜头（帽子编号 27），包括机场大厅、中途加入与退出重进的玩家；关闭后按记录的原本头饰逐一恢复。配置项切换带 **60 秒内置冷却**：冷却期间的修改会被**直接忽略**（不会排队到冷却结束后生效），需在冷却结束后再次切换。玩家做**耸肩**表情（`A_Scout_Emote_Shrug`）会在「原本帽子」与「南瓜头」之间切换；每名玩家的该切换有 **30 秒**内置冷却，冷却期间不做任何检测与判断、也不会排队生效。原帽按 Steam 用户 id 记录，退出重进仍沿用同一份原帽；开启期间每秒复核一次，以覆盖客户端自身的装扮同步。每名被成功换上南瓜头的玩家在本次开启期间会收到一次定向中英双语提示——第一行 **“Happy Halloween!”**、第二行 **“万圣节快乐！”**。客机零安装。
+- **修复** 残魂【零号守则】（把童军的毅力喂给昏迷玩家）本应等量清除该次使用追加的石化，但有两个边缘缺陷。
+    - 根因 1：3 秒校正窗口可能在属主 / 主机副本同步到代价之前就到期，增量因此残留；并且若石化始终没有回到基准，待处理条目永远不会被移除，可能对之后的所有石化增长持续压制。
+    - 根因 2：未记录到「使用前」石化快照时（补丁未生效 / 未解析到喂食目标），旧代码静默以代价后的当前值当基准，等于没有清除。
+    - 修复：校正窗口到期必定收尾；若届时仍未回到基准，则兜底发放一次额外体力并写警告日志。缺失使用前快照时改为写警告并跳过抵消，不再假装成功。主机兜底路径与客机共用本机结算（`Shared/MilesSoulLocal.cs`，随主模组客机模式与附属 1.0.7 发布）均已修复。事件协议不变。
+    - 兼容性：仍在使用主模组 1.0.9 或附属 1.0.6 的客机会继续运行其自带的旧本机结算代码，需要将附属升级到 1.0.7（或使用主模组的客机模式）才能获得该修复。
+- **注意** 职业总数变为 34。配置结构已变化，`ConfigRevision` 已递增（当前 `2026-10-31-halloween-hat-1`）：旧配置文件 `com.peakmodding.RollOfTheScout.cfg` 会在首次启动时备份为 `.old-时间戳` 并重新生成。

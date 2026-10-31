@@ -323,9 +323,9 @@ namespace RollOfTheScout.Shared
             _guardGem = gemName;
             _guardUntil = Time.time + UseDedupWindow;
 
-            int preUse = _preUsePetrify >= 0 && Time.time - _preUseAt <= 1.5f
-                ? _preUsePetrify
-                : GetPetrify(character);
+            int preUse;
+            bool hasPreUse = _preUsePetrify >= 0 && Time.time - _preUseAt <= 1.5f;
+            preUse = hasPreUse ? _preUsePetrify : GetPetrify(character);
             _preUsePetrify = -1;
 
             if (gemName == AmuletHealing)
@@ -336,13 +336,21 @@ namespace RollOfTheScout.Shared
                 }
                 else if (usage == MilesLocalGemUsage.FeedDowned && _ruleZeroAssist)
                 {
-                    _zero = new PendingZero
+                    if (!hasPreUse)
                     {
-                        Target = Mathf.Clamp(preUse, 0, 100),
-                        FireAt = Time.time + ReduceDelay,
-                        Until = Time.time + 3f,
-                        Stamina = _ruleZeroStamina,
-                    };
+                        // 没有「使用前」基准就无法知道本次追加了多少石化：宁可不清，也不拿代价后的当前值当基准。
+                        _warning?.Invoke("零号守则：未记录到使用前的石化值，本次无法等量清除（请检查宝石动作 / 喂食前缀补丁是否生效）。");
+                    }
+                    else
+                    {
+                        _zero = new PendingZero
+                        {
+                            Target = Mathf.Clamp(preUse, 0, 100),
+                            FireAt = Time.time + ReduceDelay,
+                            Until = Time.time + 3f,
+                            Stamina = _ruleZeroStamina,
+                        };
+                    }
                 }
                 else
                 {
@@ -414,7 +422,19 @@ namespace RollOfTheScout.Shared
                 _zero.StaminaApplied = true;
             }
 
-            if (Time.time >= _zero.Until && _zero.StaminaApplied) _zero = null;
+            if (Time.time >= _zero.Until)
+            {
+                // 窗口到期仍高于基准（同步过晚 / 持续外部石化）：强制收尾，避免 _zero 永久残留后无限压制石化。
+                if (!_zero.StaminaApplied)
+                {
+                    BoostStamina(character, _zero.Stamina);
+                    _zero.StaminaApplied = true;
+                    _warning?.Invoke(
+                        $"零号守则：石化未在 3 秒窗口内回到使用前基准（当前 {current} > 基准 {_zero.Target}），" +
+                        "已在窗口结束时兜底发放额外体力（可能受石化上限影响）。");
+                }
+                _zero = null;
+            }
         }
 
         private static int GetPetrify(Character character)
