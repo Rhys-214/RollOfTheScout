@@ -40,7 +40,7 @@ Config files are generated automatically on first run(`BepInEx/config/com.peakmo
 > If a new version adds options, an existing `.cfg` will **not** pick up the new keys — delete the old `.cfg` and restart to regenerate.
 > After the mod is updated to version 1.0.7 or later, the mod configuration file will be automatically backed up and reset during the update.
 
-### Current class list (v1.1.0, as of Oct 31, 2026)
+### Current class list (v1.1.1, as of Nov 1, 2026)
 
 `Explorer`, `Leader`, `Logistician`, `Doctor`, `Assassin`, `Pandora`, `Necromancer`, `M`, `Savage`, `Scout`, `StandardBearer`, `Dancer`, `Daihao`, `Saint`, `Mage`, `Challenger`, `MasterChef`, `Cook`, `Pacifist`, `Hamster`, `Firefighter`, `Narcissist`, `LoneWolf`, `Gunner`, `Band`, `MilesSoul`, `Qu`, `Astronaut`, `Langwang`, `Programmer`, `ChaosEnderman`, `Gargoyle`, `Alchemist`, `Trickster`.
 
@@ -155,7 +155,7 @@ Welcome to join the PEAK community group ~ (QQ group: **814891614**; mod updates
 > 新版本若新增了配置项，**旧的 `.cfg` 不会自动补全新键** —— 请删除旧版 `.cfg` 后重启以重新生成。
 > 模组1.0.7版本及以后，模组配置文件将会自动备份与更新重置。
 
-### 当前版本职业一览（v1.1.0，截止至2026年10月31日）
+### 当前版本职业一览（v1.1.1，截止至2026年11月1日）
 
 `先驱, 领袖, 后勤, 医生, 刺客, 潘多拉之子, 死灵法师, M, 野人, 童军, 旗手, 舞王, 待皓, 圣人, 法师, 挑战者, 特级厨师, 炊事员, 和平主义者, 仓鼠, 救火队员, 自恋狂, 独狼, 炮手, 乐队成员, 迈尔斯残魂, 区, 太空人, 榔王, 程序员, 混乱末影人, 石像鬼, 炼金术士，捣蛋鬼`
 

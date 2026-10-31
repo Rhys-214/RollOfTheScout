@@ -13,7 +13,7 @@ namespace RollOfTheScout
     /// 方案 B「仅主机安装即可游玩」职业模组入口。
     /// 主机执行完整职业逻辑；装有主模组的客机另通过共用组件处理本机残魂宝石结算。
     /// </summary>
-    [BepInPlugin(Guid, "RollOfTheScout", "1.1.0")]
+    [BepInPlugin(Guid, "RollOfTheScout", "1.1.1")]
     public class Plugin : BaseUnityPlugin
     {
         public const string Guid = "com.peakmodding.RollOfTheScout";
@@ -29,7 +29,7 @@ namespace RollOfTheScout
         /// 当前配置文件结构的版本标记。**每次改动 Section / Key 结构时都要改这个值**：
         /// 标记不一致时，旧 cfg 会被备份（.old-时间戳）并删除，由 BepInEx 重新生成默认文件。
         /// </summary>
-        private const string ConfigRevision = "2026-10-31-halloween-hat-1";
+        private const string ConfigRevision = "2026-11-01-alchemist-1";
 
         /// <summary>
         /// 自动清理「旧结构」配置文件（在第一次 Bind 之前调用才有效：BepInEx 的 ConfigFile 是惰性加载的）。

@@ -1201,6 +1201,8 @@ namespace RollOfTheScout
             public float NextEquivAt;
             /// <summary>【能量汲取】已触发次数（达到阈值后清零并做奖励判定）。</summary>
             public int DrainCount;
+            /// <summary>【能量汲取】上一次实际触发汲取的物品预制体名（用于「连续同类物品不计数」）。</summary>
+            public string LastDrainItem;
             /// <summary>【能量汲取】下一次允许触发的时刻（<c>Time.time</c>）。</summary>
             public float NextDrainAt;
             /// <summary>【贤者之石】通过【等价交换】累计获得的石头数。</summary>
@@ -9105,7 +9107,11 @@ namespace RollOfTheScout
             float stamina = ModConfig.Alchemist.DrainStamina.Value;
             if (stamina != 0f) HostApi.BoostExtraStamina(character, stamina);
 
-            state.DrainCount++;
+            // 连续拾取「与上一次汲取相同的可食用物品」不计入次数，避免用同一种食物原地刷奖励。
+            bool sameAsLast = !string.IsNullOrEmpty(state.LastDrainItem)
+                && string.Equals(state.LastDrainItem, itemName, System.StringComparison.OrdinalIgnoreCase);
+            state.LastDrainItem = itemName;
+            if (!sameAsLast) state.DrainCount++;
 
             int every = ModConfig.Alchemist.DrainRewardEvery.Value;
             bool reward = every > 0 && state.DrainCount >= every;
@@ -9114,7 +9120,7 @@ namespace RollOfTheScout
             Plugin.Log.LogInfo(
                 $"[RollOfTheScout] 能量汲取：{Nick(character)} 拾取的 {itemName} 被销毁，"
                 + $"负面 -{reduce * 100f:0.#}、石化 -{(hasPetrify ? petrifyReduce : 0)}、额外体力 +{stamina}"
-                + $"（累计 {state.DrainCount}/{every}）。");
+                + $"（累计 {state.DrainCount}/{every}{ (sameAsLast ? "；与上次同类物品相同，本次不计数" : string.Empty)}）。");
 
             if (reward) GiveAlchemistDrainReward(character);
         }

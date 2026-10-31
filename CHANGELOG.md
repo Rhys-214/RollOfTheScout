@@ -336,3 +336,23 @@
     - 修复：校正窗口到期必定收尾；若届时仍未回到基准，则兜底发放一次额外体力并写警告日志。缺失使用前快照时改为写警告并跳过抵消，不再假装成功。主机兜底路径与客机共用本机结算（`Shared/MilesSoulLocal.cs`，随主模组客机模式与附属 1.0.7 发布）均已修复。事件协议不变。
     - 兼容性：仍在使用主模组 1.0.9 或附属 1.0.6 的客机会继续运行其自带的旧本机结算代码，需要将附属升级到 1.0.7（或使用主模组的客机模式）才能获得该修复。
 - **注意** 职业总数变为 34。配置结构已变化，`ConfigRevision` 已递增（当前 `2026-10-31-halloween-hat-1`）：旧配置文件 `com.peakmodding.RollOfTheScout.cfg` 会在首次启动时备份为 `.old-时间戳` 并重新生成。
+
+## 1.1.1
+
+### English
+
+- **Changed** Alchemist 【Equivalent Exchange】: the random negative status added per trigger is now **+10** (was +7.5). Petrify is stored as an integer percentage, so it now adds **+10 petrify** as well (previously 7.5 rounded down to +7).
+- **Changed** Alchemist 【Energy Drain】: the bonus reward roll is back to **every 12 triggers** (was every 7). Reward contents and chances are unchanged (50% Cure-All / 40% Pandora's lunchbox / 10% dynamite).
+- **Changed** Alchemist 【Energy Drain】: a pickup no longer counts toward the tally when it is the **same edible item as the previous counted pickup**, so repeatedly picking up the same food cannot farm the every-12 reward. The effect itself still resolves normally (item destroyed, debuffs reduced, stamina granted).
+- **Changed** The in-game class intro and `ModClassIntroduction.md` (Chinese / English) are updated to match: "+10 random debuff" and "a special reward every 12 triggers".
+- **Note** `ConfigRevision` is now `2026-11-01-alchemist-1`. Root cause of the forced override: BepInEx reuses the values already present in an existing `.cfg`, so changing only a default value would **not** take effect for existing users. Bumping the revision makes the mod back up the old file to `.old-<timestamp>` and regenerate it with the new defaults. Custom values from the old file must be re-applied manually from the backup.
+- **Note** Main mod version is now **1.1.1**. The client addon stays at **1.0.7**; only the bundled class-introduction document was refreshed, and no client code or config keys changed.
+
+### 中文
+
+- **调整** 炼金术士【等价交换】：每次触发的随机负面状态增加量改为 **+10**（原 +7.5）。石化按整数百分比存储，因此也变为 **+10 石化**（原先 7.5 向下取整为 +7）。
+- **调整** 炼金术士【能量汲取】：额外奖励判定改回 **每触发 12 次**（原为每 7 次）。奖励内容与概率不变（50% 万灵药 / 40% 潘多拉餐盒 / 10% 炸药）。
+- **调整** 炼金术士【能量汲取】：若本次拾取的可食用物品与上一次**计入累计**的物品相同，则**此次拾取不计入次数**，避免连续拾取同一种食物刷奖励；物品仍照常销毁、负面削减与额外体力照常结算。
+- **调整** 游戏内职业介绍与 `ModClassIntroduction.md`（中英双语）同步为「+10 随机负面」与「每 12 次特殊奖励」。
+- **注意** `ConfigRevision` 递增为 `2026-11-01-alchemist-1`。强制覆盖旧数值的根因：BepInEx 对已生成的 `.cfg` 会沿用旧值，仅改默认值时老用户不会生效；递增 revision 后模组会把旧配置备份为 `.old-时间戳` 并以新默认值重建。旧文件中的自定义数值需从备份中手动恢复。
+- **注意** 主模组版本变为 **1.1.1**；附属模组仍为 **1.0.7**，仅更新了随包附带的职业介绍文档，客机无代码 / 配置键变化。
