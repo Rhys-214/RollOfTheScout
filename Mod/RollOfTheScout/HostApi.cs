@@ -417,57 +417,68 @@ namespace RollOfTheScout
         }
 
         /// <summary>
-        /// 把一件普通物品放进目标玩家**已装备的背包**（普通背包 / 滑稽背包均可），
-        /// 用于「物品栏全满时继续收纳」的效果（捣蛋鬼【捣蛋·转移】）。
+        /// 把「来源玩家某个物品栏里的物品」直接放进目标玩家**已装备的背包**（普通背包 / 滑稽背包）。
         ///
-        /// 实现与原版 <c>Player.AddItem</c> 的背包分支保持一致：
-        /// 先取 <c>backpackSlot.data</c> 里的 <c>BackpackData</c>，找到第一个空槽写入实例数据，
-        /// 再由主机广播 <c>SyncInventoryRPC</c>（与 <c>AddItem</c> 相同的整包同步）。
+        /// 旧实现由主机手动改 <c>BackpackData</c> 后广播整包 <c>SyncInventoryRPC</c>；
+        /// 整包同步会替换远端已装备背包槽里的物品实例，而且 <c>BackpackData</c> 恒为 4 槽、
+        /// 滑稽背包的实际可视槽位可能更少 —— 写到越界槽会让原版 <c>PutInBackpackRPC</c>
+        /// 取 <c>backpackSlots[slotID]</c> 越界，物品显示异常 / 丢失，背包状态与可视对象也会不一致。
+        ///
+        /// 现改为复用原版「往已装备背包塞物品」的通道：
+        /// <c>CharacterBackpackHandler.RPCAddItemToCharacterBackpack(playerView, inventorySlotID, backpackSlotID)</c>。
+        /// 各客户端从**来源玩家的物品栏**读取预制体与实例数据后写入目标背包，既保留物品数据，
+        /// 也不会重建目标背包槽。调用前只检查目标背包存在且有空槽；返回 true 后由调用方清空来源槽。
         /// </summary>
-        public static bool TryGiveItemToBackpack(Character target, string prefabName)
+        public static bool TryGiveItemToBackpack(Character target, Character source, byte sourceSlotId)
         {
             if (!PhotonNetwork.IsMasterClient) return false;
-            if (target == null || target.player == null) return false;
-            if (!ItemDatabase.TryGetItem(prefabName, out Item prefab) || prefab == null) return false;
-            // 背包类物品本身不塞进背包，避免嵌套
-            if (prefab is Backpack) return false;
+            if (target == null || target.player == null || source == null || source.player == null) return false;
 
-            var player = target.player;
-            var backpackSlot = player.backpackSlot;
+            var sourceSlot = source.player.GetItemSlot(sourceSlotId);
+            if (sourceSlot == null || sourceSlot.IsEmpty() || sourceSlot.prefab == null) return false;
+            // 背包类物品本身不塞进背包，避免嵌套
+            if (sourceSlot.prefab is Backpack) return false;
+
+            var backpackSlot = target.player.backpackSlot;
             if (backpackSlot == null || backpackSlot.IsEmpty() || backpackSlot.data == null) return false;
 
             BackpackData data;
             if (!backpackSlot.data.TryGetDataEntry<BackpackData>(DataEntryKey.BackpackData, out data) || data == null)
-                data = backpackSlot.data.RegisterNewEntry<BackpackData>(DataEntryKey.BackpackData);
-            if (data == null || data.itemSlots == null) return false;
+                return false;   // 不凭空注册 BackpackData，避免破坏已装备背包
+            if (data.itemSlots == null) return false;
+
+            // BackpackData 固定 4 槽；实际可用槽位还受背包可视对象 / 预制体 slotCount 限制。
+            int capacity = data.itemSlots.Length;
+            try
+            {
+                var visuals = BackpackReference.GetFromEquippedBackpack(target).GetVisuals();
+                if (visuals != null)
+                {
+                    if (visuals.backpackSlots != null && visuals.backpackSlots.Length > 0)
+                        capacity = Math.Min(capacity, visuals.backpackSlots.Length);
+                    var onBack = visuals as BackpackOnBackVisuals;
+                    if (onBack != null && onBack.slotCount > 0)
+                        capacity = Math.Min(capacity, onBack.slotCount);
+                }
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogWarning($"[HostApi] 读取背包可用槽位失败，按 BackpackData 槽数处理：{e.Message}");
+            }
 
             int slotIndex = -1;
-            for (int i = 0; i < data.itemSlots.Length; i++)
+            for (int i = 0; i < capacity; i++)
             {
                 if (data.itemSlots[i] != null && data.itemSlots[i].IsEmpty()) { slotIndex = i; break; }
             }
             if (slotIndex < 0) return false;
 
-            var instanceData = new ItemInstanceData(System.Guid.NewGuid());
-            ItemInstanceDataHandler.AddInstanceData(instanceData);
-            data.itemSlots[slotIndex].SetItem(prefab, instanceData);
+            var handler = target.refs != null ? target.refs.backpackHandler : null;
+            if (handler == null) return false;
 
-            // 与 Player.AddItem 相同：把 3 个物品栏 + 背包槽 + 主手临时槽整包同步给其他客户端
-            var sync = IBinarySerializable.ToManagedArray(
-                new InventorySyncData(player.itemSlots, player.backpackSlot, player.tempFullSlot));
-            player.photonView.RPC("SyncInventoryRPC", RpcTarget.Others, sync, false);
-
-            // 主机本地副本的背包外观刷新（远端由各自的 SyncInventoryRPC / 打开背包时刷新）
-            try
-            {
-                var reference = BackpackReference.GetFromEquippedBackpack(target);
-                var visuals = reference.GetVisuals();
-                if (visuals != null) visuals.RefreshVisuals();
-            }
-            catch (System.Exception e)
-            {
-                Plugin.Log.LogWarning($"[HostApi] 背包外观刷新失败（不影响物品发放）：{e.Message}");
-            }
+            // 原版通道：各客户端把「来源玩家该槽位的物品」写入目标背包的第 slotIndex 槽。
+            target.photonView.RPC("RPCAddItemToCharacterBackpack", RpcTarget.All,
+                source.photonView, sourceSlotId, (byte)slotIndex);
             return true;
         }
 

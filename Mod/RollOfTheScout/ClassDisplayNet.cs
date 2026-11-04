@@ -69,6 +69,16 @@ namespace RollOfTheScout
         /// </summary>
         public const byte KindTargetedToast = 6;
 
+        /// <summary>
+        /// Kind：玩法模式的「存活状态面板」快照（<c>"actor=status;…"</c>）。
+        /// status：0 = 存活，1 = 死亡，2 = 异常。由外置玩法模式（如潘多拉大乱斗）驱动。
+        /// 该事件**强制发送**，不受「职业显示-网络同步」开关影响，否则客机看不到模式面板。
+        /// </summary>
+        public const byte KindModeSnapshot = 11;
+
+        /// <summary>Kind：关闭玩法模式的存活状态面板，客机恢复显示普通职业面板。</summary>
+        public const byte KindModeOff = 12;
+
         /// <summary>残魂本机能力握手（客机 → 主机）与使用报告（主机据此只计数，不重复结算）。</summary>
         public const byte KindMilesClientHello = 7;
         public const byte KindMilesUsageReport = 9;
@@ -184,6 +194,43 @@ namespace RollOfTheScout
         }
 
         /// <summary>
+        /// 广播玩法模式的存活状态快照（强制发送，不受「职业显示-网络同步」开关影响）。
+        /// 参数为 (ActorNumber, 0=存活 / 1=死亡 / 2=异常)。
+        /// </summary>
+        public static void BroadcastModeSnapshot(IList<KeyValuePair<int, int>> actorStatusPairs)
+        {
+            if (!PhotonNetwork.InRoom || !PhotonNetwork.IsMasterClient) return;
+            if (actorStatusPairs == null || actorStatusPairs.Count == 0)
+            {
+                BroadcastModeOff();
+                return;
+            }
+
+            var sb = new StringBuilder(actorStatusPairs.Count * 8);
+            for (int i = 0; i < actorStatusPairs.Count; i++)
+            {
+                if (i > 0) sb.Append(';');
+                sb.Append(actorStatusPairs[i].Key).Append('=').Append(actorStatusPairs[i].Value);
+            }
+            SendForced(KindModeSnapshot, sb.ToString());
+        }
+
+        /// <summary>关闭玩法模式的存活状态面板（强制发送）。</summary>
+        public static void BroadcastModeOff()
+        {
+            if (!PhotonNetwork.InRoom || !PhotonNetwork.IsMasterClient) return;
+            SendForced(KindModeOff, "0");
+        }
+
+        /// <summary>广播一条玩法模式提示（强制发送，不受「职业显示-网络同步」开关影响）。</summary>
+        public static void BroadcastModeToast(string text)
+        {
+            if (!PhotonNetwork.InRoom || !PhotonNetwork.IsMasterClient) return;
+            if (string.IsNullOrEmpty(text)) return;
+            SendForced(KindToast, text);
+        }
+
+        /// <summary>
         /// 向指定客机下发残魂职业与生效配置。该通道属于玩法同步，不受「职业显示-网络同步」开关影响。
         /// </summary>
         public static void SendMilesGameplayState(int actorNumber, string data)
@@ -229,6 +276,32 @@ namespace RollOfTheScout
             catch (System.Exception e)
             {
                 Plugin.Log.LogWarning($"[RollOfTheScout] 职业显示网络广播失败（kind={kind}）：{e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 与 <see cref="Send"/> 相同，但**不检查** <see cref="ShouldBroadcast"/>。
+        /// 仅用于玩法模式的存活状态面板 / 提示：它们属于玩法 UI，不能因为「职业显示-网络同步」
+        /// 关闭而让客机完全失去反馈。
+        /// </summary>
+        private static void SendForced(byte kind, string data)
+        {
+            try
+            {
+                object[] payload = { ModId, kind, data };
+                bool sent = PhotonNetwork.RaiseEvent(
+                    EventCode, payload,
+                    new RaiseEventOptions { Receivers = ReceiverGroup.Others },
+                    SendOptions.SendReliable);
+                if (!sent)
+                {
+                    Plugin.Log.LogWarning(
+                        $"[RollOfTheScout] 玩法模式广播未被 Photon 接受（kind={kind}，payload={payload.Length} 段）。");
+                }
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogWarning($"[RollOfTheScout] 玩法模式网络广播失败（kind={kind}）：{e.Message}");
             }
         }
 

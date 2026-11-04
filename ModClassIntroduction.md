@@ -242,7 +242,7 @@ Class introduction — applies to the **RollOfTheScout** mod, version **1.1.0** 
 34. **Trickster**
 - Keywords: Periodic area candy · Trick on full inventories · Pickup conversion · Sugar penalty
     - "Halloween knocker: candy to players in range on a timer, granting you extra stamina when it lands; a full inventory gets tricked — one item is snatched or Pandora strikes repeatedly; edible pickups turn into candy, but eating candy costs injury from cavities."
-- 【Sugar】Every 120 s, every other player within 30 m receives 1 random candy (placed into an empty item slot): mixed nuts (weight 5, same below) / marshmallow (3) / big lollipop (1); each player who successfully receives candy grants you +5 extra stamina. Edible pickups are replaced by a random candy (glow mushroom / mixed nuts / marshmallow / big lollipop / Cure-All / Pandora's lunchbox are exempt).
+- 【Sugar】Every 123 s, every other player within 30 m receives 1 random candy (placed into an empty item slot): mixed nuts (weight 5, same below) / marshmallow (3) / big lollipop (1); each player who successfully receives candy grants you +5 extra stamina. Edible pickups are replaced by a random candy (glow mushroom / mixed nuts / marshmallow / big lollipop / Cure-All / Pandora's lunchbox are exempt).
 - 【Trick】If an affected player's inventory is full when 【Sugar】 triggers, they receive no candy; instead they gain +15 drowsiness and one special roll: 70% one random item from their inventory is transferred to the Trickster (the item is destroyed at their end first, then given to the Trickster — empty item slot first, otherwise the equipped backpack / fanny pack, and if both are full it is spawned at the Trickster's feet; multiple transfers are queued 1 s apart); 30% the player is hit with 3 Pandora effects in a row (1 s apart). Each affected player also gives the Trickster +5 drowsiness.
 - 【Cavity】Each time you eat marshmallow or big lollipop, +2.5 injury.
 
@@ -486,6 +486,6 @@ Class introduction — applies to the **RollOfTheScout** mod, version **1.1.0** 
 34. **捣蛋鬼**
 - 关键词：周期范围发糖、满物品栏捣蛋、拾取转化、吃糖惩罚
     - “万圣敲门：定时给范围内的玩家发糖，成功使自身获得额外体力；若对方物品栏已满则捣蛋：随机抢走一件物品或连施潘多拉；拾取食物会变糖，但吃糖有蛀牙的损伤惩罚”
-- 【发糖】每120秒，使自身半径30米内的所有玩家（不包括自己）获得一个随机糖果（放入空物品栏）：混合坚果（权重5，后同）/棉花糖（3）/大棒棒糖（1）；每成功使一名玩家获得糖果，自身+5额外体力；拾取可食用物品会替换为随机糖果（诡异菇、混合坚果、棉花糖、大棒棒糖、万灵药、潘多拉餐盒不受影响）
+- 【发糖】每123秒，使自身半径30米内的所有玩家（不包括自己）获得一个随机糖果（放入空物品栏）：混合坚果（权重5，后同）/棉花糖（3）/大棒棒糖（1）；每成功使一名玩家获得糖果，自身+5额外体力；拾取可食用物品会替换为随机糖果（诡异菇、混合坚果、棉花糖、大棒棒糖、万灵药、潘多拉餐盒不受影响）
 - 【捣蛋】若【发糖】触发时受影响的玩家物品栏已满，则不再使其获得糖果，改为使其+15困倦，并进行一次特殊判定：70%概率将该玩家物品栏中的随机一个物品转移至捣蛋鬼自身（玩家处的该物品销毁，再优先放入捣蛋鬼空物品栏，已满则放入其背包 / 滑稽背包，都已满则在其脚下生成；多次转移按1秒间隔依次发放），30%概率为该玩家连续施加3次潘多拉效果（间隔1秒）；每影响一名玩家，自身+5困倦
 - 【蛀牙】每次食用棉花糖或大棒棒糖后，+2.5损伤

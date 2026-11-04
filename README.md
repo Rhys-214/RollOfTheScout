@@ -21,6 +21,10 @@
 - **Optional client support** (Photon custom event `197`): the companion addon shows class info and gives MilesSoul clients the same local gem-action detection and settlement as the main mod's client mode.
 - **Fully configurable**, and the config file is **bilingual**.
 
+### Companion mode
+
+A separate companion addon, **RollOfTheScout: PandoraBattleRoyale (童子军的命运之骰：潘多拉大乱斗)**, adds a host-only battle-royale mode on top of this mod. Install the main mod **and** the companion addon on the host; clients need only the main mod v1.1.2+ or client addon v1.0.8+ for the survival panel and bilingual notices. The mode is disabled by default.
+
 ### Requirements
 
 - **PEAK** (Steam)
@@ -40,7 +44,7 @@ Config files are generated automatically on first run(`BepInEx/config/com.peakmo
 > If a new version adds options, an existing `.cfg` will **not** pick up the new keys — delete the old `.cfg` and restart to regenerate.
 > After the mod is updated to version 1.0.7 or later, the mod configuration file will be automatically backed up and reset during the update.
 
-### Current class list (v1.1.1, as of Nov 1, 2026)
+### Current class list (v1.1.2, as of Nov 3, 2026)
 
 `Explorer`, `Leader`, `Logistician`, `Doctor`, `Assassin`, `Pandora`, `Necromancer`, `M`, `Savage`, `Scout`, `StandardBearer`, `Dancer`, `Daihao`, `Saint`, `Mage`, `Challenger`, `MasterChef`, `Cook`, `Pacifist`, `Hamster`, `Firefighter`, `Narcissist`, `LoneWolf`, `Gunner`, `Band`, `MilesSoul`, `Qu`, `Astronaut`, `Langwang`, `Programmer`, `ChaosEnderman`, `Gargoyle`, `Alchemist`, `Trickster`.
 
@@ -136,6 +140,10 @@ Welcome to join the PEAK community group ~ (QQ group: **814891614**; mod updates
 - **可选客机支持**（Photon 自定义事件 `197`）：配套附属模组可显示职业信息，并让残魂客机使用与主模组客机模式相同的本机宝石检测与结算。
 - **全部可配置**，且配置文件为**中英双语**。
 
+### 配套玩法模式
+
+独立的配套附属模组 **RollOfTheScout: PandoraBattleRoyale（童子军的命运之骰：潘多拉大乱斗）** 在本模组之上增加一个仅主机安装的大逃杀模式。主机需同时安装主模组与该配套附属模组；客机只需主模组 v1.1.2+ 或客机附属 v1.0.8+ 即可显示存活状态面板与中英双语提示。该模式默认关闭。
+
 ### 环境要求
 
 - **PEAK**（Steam）
@@ -155,7 +163,7 @@ Welcome to join the PEAK community group ~ (QQ group: **814891614**; mod updates
 > 新版本若新增了配置项，**旧的 `.cfg` 不会自动补全新键** —— 请删除旧版 `.cfg` 后重启以重新生成。
 > 模组1.0.7版本及以后，模组配置文件将会自动备份与更新重置。
 
-### 当前版本职业一览（v1.1.1，截止至2026年11月1日）
+### 当前版本职业一览（v1.1.2，截止至2026年11月3日）
 
 `先驱, 领袖, 后勤, 医生, 刺客, 潘多拉之子, 死灵法师, M, 野人, 童军, 旗手, 舞王, 待皓, 圣人, 法师, 挑战者, 特级厨师, 炊事员, 和平主义者, 仓鼠, 救火队员, 自恋狂, 独狼, 炮手, 乐队成员, 迈尔斯残魂, 区, 太空人, 榔王, 程序员, 混乱末影人, 石像鬼, 炼金术士，捣蛋鬼`
 

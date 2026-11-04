@@ -356,3 +356,37 @@
 - **调整** 游戏内职业介绍与 `ModClassIntroduction.md`（中英双语）同步为「+10 随机负面」与「每 12 次特殊奖励」。
 - **注意** `ConfigRevision` 递增为 `2026-11-01-alchemist-1`。强制覆盖旧数值的根因：BepInEx 对已生成的 `.cfg` 会沿用旧值，仅改默认值时老用户不会生效；递增 revision 后模组会把旧配置备份为 `.old-时间戳` 并以新默认值重建。旧文件中的自定义数值需从备份中手动恢复。
 - **注意** 主模组版本变为 **1.1.1**；附属模组仍为 **1.0.7**，仅更新了随包附带的职业介绍文档，客机无代码 / 配置键变化。
+
+## 1.1.2
+
+### English
+
+- **Fixed** Trickster 【Trick·Transfer】 when the Trickster's 3 inventory slots and equipped backpack are all full: the stolen item vanished instead of spawning at the feet, and afterwards the equipped fanny pack could not be removed (pressing the backpack key spawned duplicate loaded packs, and taking items from those copies made all copies lose the items without giving them to the player).
+    - Root cause 1: `BackpackData` always has 4 slots, but the equipped fanny pack has fewer usable visual slots. The old code picked a slot from `itemSlots.Length` (4) and wrote into an out-of-range slot; vanilla `PutInBackpackRPC` then indexed `backpackSlots[slotID]` out of bounds, so the item never appeared and the backpack's data/visual state desynced.
+    - Root cause 2: the old code manually wrote `BackpackData` and broadcast a full `SyncInventoryRPC`, which replaced the remote equipped backpack-slot item instance. Combined with the desync above, the equipped backpack could no longer be dropped normally.
+    - Root cause 3: the item was removed from the victim before the feet-spawn was confirmed, so when the spawn was refused (e.g. the Trickster was at the death sentinel) the item was lost.
+    - Fix: now reuses the vanilla `RPCAddItemToCharacterBackpack(playerView, inventorySlotID, backpackSlotID)` channel (each client reads the victim's slot and writes the target backpack, preserving item data and never rebuilding the target backpack slot); available capacity is capped by `BackpackData` slots, the equipped visuals' `backpackSlots.Length` and `slotCount`; the victim's slot is cleared only after the destination has accepted the item, and a refused feet-spawn keeps the item in place and retries from the queue.
+- **Fixed** Chaos Enderman (code 31) class intro showed the full detailed class effects instead of the short summary: the in-game intro table entry was the long effect text. It now uses the same short 「混乱传送」/ "Chaos Teleport" summary as the bundled class document, in both the main mod and the client addon.
+- **Changed** Trickster 【Sugar】 interval 120 → **123 s** (config `sugarIntervalSeconds`, document Chinese / English and default description synced).
+- **Note** `ConfigRevision` is now `2026-11-02-trickster-1`. Root cause of the forced override: BepInEx reuses the values already present in an existing `.cfg`, so changing only a default value would **not** take effect for existing users. Bumping the revision makes the mod back up the old file to `.old-<timestamp>` and regenerate it with the new defaults. Custom values from the old file must be re-applied manually from the backup.
+- **Note** Main mod version is now **1.1.2**. The client addon is now **1.0.8** (display-only intro fix; no client config keys changed).
+- **New** Public runtime bridge for companion game modes (`PandoraModeBridge`): external addons can pause random class assignment, force / clear individual classes without applying the reclass status-clear, override Pandora max players / box radius / box interval, disable all reclass paths, grant the existing invincibility effect, and request display synchronization. The bridge is inert unless a companion addon writes to it, so the main mod behaves exactly as before when used alone.
+- **New** `PandoraModeBridge.SpawnScoutmaster` / `HostClassManager.ModeSpawnScoutmaster`: spawn a Scoutmaster with an explicit target and chase time, returning its `PhotonView` so a companion mode can make it flee immediately. This path deliberately bypasses the main mod's 【Soul Hindrance】 4-Scoutmaster global cap; the main mod's own MilesSoul effect is unchanged.
+- **New** Survival-status display channel (event 197, Kind 11 / 12) and forced mode notices, used by the companion **Pandora Battle Royale** mode. The main mod's client mode and the client addon 1.0.8 both render the `Alive · 存活` / `Dead · 死亡` / `Error · 异常` panel and the bilingual death / winner notices.
+- **Docs** The main README now mentions the companion **Pandora Battle Royale** mode; the bundled class document is unchanged.
+
+### 中文
+
+- **修复** 捣蛋鬼【捣蛋·转移】在捣蛋鬼 3 个物品栏与已装备背包均已满时：应获得物品直接消失而未在脚下生成；此后身上的滑稽背包无法取下，按背包键会在面前反复生成装有相同物品的背包，从这些副本中取物品会导致所有副本的物品一起消失但玩家并未拿到。
+    - 根因 1：`BackpackData` 恒为 4 槽，而滑稽背包实际可用的可视槽位更少。旧代码按 `itemSlots.Length`（4）选槽并写入越界槽，原版 `PutInBackpackRPC` 随后取 `backpackSlots[slotID]` 越界，物品既显示不出来，背包数据与可视对象也进入不一致状态。
+    - 根因 2：旧代码手动改 `BackpackData` 后广播整包 `SyncInventoryRPC`，会替换远端已装备背包槽里的物品实例；叠加上述不一致状态，背包便无法正常取下 / 丢弃。
+    - 根因 3：旧代码先从受害者处清空物品，再尝试在脚下生成；当生成被拒绝（如捣蛋鬼处于死亡哨兵坐标）时物品已凭空消失。
+    - 修复：改用原版 `RPCAddItemToCharacterBackpack(playerView, inventorySlotID, backpackSlotID)` 通道（各客户端从受害者槽位读取并写入目标背包，保留物品数据且不重建目标背包槽）；可用容量取 `BackpackData` 槽数、已装备背包可视 `backpackSlots.Length` 与 `slotCount` 的最小值；确认目标收下后才清空受害者槽位；脚下生成被拒绝时保留原物品并由队列稍后重试。
+- **修复** 混乱末影人（职业码 31）职业简介显示为详细职业效果而非简介：游戏内简介表该条目误用了长效果文本。现改为与随包职业介绍文档一致的「混乱传送」/ "Chaos Teleport" 短简介，主模组与附属模组同步。
+- **调整** 捣蛋鬼【发糖】触发间隔 120 秒 → **123 秒**（配置 `sugarIntervalSeconds`、文档中英与默认说明同步）。
+- **注意** `ConfigRevision` 递增为 `2026-11-02-trickster-1`。强制覆盖旧数值的根因：BepInEx 对已生成的 `.cfg` 会沿用旧值，仅改默认值时老用户不会生效；递增 revision 后模组会把旧配置备份为 `.old-时间戳` 并以新默认值重建。旧文件中的自定义数值需从备份中手动恢复。
+- **注意** 主模组版本变为 **1.1.2**；附属模组升为 **1.0.8**（仅显示层简介修复，客机无配置键变化）。
+- **新增** 外置玩法模式的公开运行时桥接层（`PandoraModeBridge`）：附属模组可暂停随机职业分配、静默强制 / 清空单个玩家的职业（不触发转职的清负面）、覆盖潘多拉最大人数 / 魔盒半径 / 魔盒间隔、完全禁止转职、发放主模组既有的无敌效果，并请求显示快照同步。未安装附属玩法模组时该桥接层保持默认值，主模组行为与以前完全一致。
+- **新增** `PandoraModeBridge.SpawnScoutmaster` / `HostClassManager.ModeSpawnScoutmaster`：按指定目标与追击时长生成童军领队，并返回其 `PhotonView` 供附属模式随时让其逃离。该路径有意绕过主模组【众魂阻挠】的 4 名全场上限；主模组自身的残魂效果不变。
+- **新增** 存活状态显示通道（事件 197，Kind 11 / 12）与强制模式提示，供配套玩法 **潘多拉大乱斗** 使用。主模组客机模式与客机附属 1.0.8 均可显示 `Alive · 存活` / `Dead · 死亡` / `Error · 异常` 面板，以及中英双语的死亡 / 获胜提示。
+- **文档** 主模组 README 增加配套 **潘多拉大乱斗** 模式说明；随包职业介绍文档不变。

@@ -3419,8 +3419,8 @@ namespace RollOfTheScout
                     "随机分配时捣蛋鬼被抽中的权重。默认 5。");
 
                 // ---------------- 【发糖】 ----------------
-                SugarIntervalSeconds = BindL(config, "捣蛋鬼", "发糖-触发间隔", 120f,
-                    "【发糖】每隔多少秒自动为自身半径内的玩家发一次糖（秒）。默认 120。设为 0 关闭本效果。");
+                SugarIntervalSeconds = BindL(config, "捣蛋鬼", "发糖-触发间隔", 123f,
+                    "【发糖】每隔多少秒自动为自身半径内的玩家发一次糖（秒）。默认 123。设为 0 关闭本效果。");
                 SugarRadius = BindL(config, "捣蛋鬼", "发糖-半径", 30f,
                     "【发糖】作用半径（米），半径内**不包括自己**的其他玩家每人判定一次。默认 30。");
                 SugarSelfStaminaPerPlayer = BindL(config, "捣蛋鬼", "发糖-自身每人额外体力", 0.05f,

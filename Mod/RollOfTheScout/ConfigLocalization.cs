@@ -810,7 +810,7 @@ namespace RollOfTheScout
             { "捣蛋鬼|最大人数", ("tricksterMaxPlayers", "Maximum number of players the Trickster is assigned to. Set to 0 for unlimited. Default 2.") },
             { "捣蛋鬼|最小人数", ("tricksterMinPlayers", "Minimum number of players the Trickster is assigned to. This class is prioritized to fill up when there are too few.") },
             { "捣蛋鬼|抽取权重", ("tricksterWeight", "Weight of the Trickster when randomly assigning. Default 5.") },
-            { "捣蛋鬼|发糖-触发间隔", ("sugarIntervalSeconds", "[Sugar] How often (in seconds) candy is given to players within radius. Default 120. Set to 0 to disable.") },
+            { "捣蛋鬼|发糖-触发间隔", ("sugarIntervalSeconds", "[Sugar] How often (in seconds) candy is given to players within radius. Default 123. Set to 0 to disable.") },
             { "捣蛋鬼|发糖-半径", ("sugarRadius", "[Sugar] Radius (meters). Every other player within it (excluding yourself) is checked once. Default 30.") },
             { "捣蛋鬼|发糖-自身每人额外体力", ("sugarSelfStaminaPerPlayer", "[Sugar] Extra stamina you gain for each player who successfully receives candy (0.05 = 5 points). Default 0.05.") },
             { "捣蛋鬼|糖果池", ("candyPool", "[Sugar] Candy item pool (comma-separated prefab names, weights set by the three entries below). Default: TrailMix / Marshmallow / Lollipop. If invalid or empty it falls back to these three.") },

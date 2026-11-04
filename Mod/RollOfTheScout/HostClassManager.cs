@@ -548,6 +548,13 @@ namespace RollOfTheScout
 
         private bool _inRun;
         private bool _pendingNewLevel;
+
+        /// <summary>
+        /// 本局「进入新关卡」的序号（从 1 开始）。附属玩法模式据此启动每关的准备期；
+        /// 主模组在清空旧职业之后、发放新关卡物品之前递增并触发
+        /// <see cref="PandoraModeBridge.RaiseNewLevelStarted"/>。
+        /// </summary>
+        public int LevelSerial { get; private set; }
         private float _pollTimer;
         private float _inspireTimer;
         private float _inspireDrowsyTimer;
@@ -1535,6 +1542,8 @@ namespace RollOfTheScout
         // 只有主机发送；周期重发保证中途加入的客机也能尽快拿到快照；职业变动时置脏以尽快同步。
         private float _nextDisplaySyncTime;
         private bool _displaySyncDirty;
+        /// <summary>上一次快照是否处于「玩法模式存活状态」；用于模式结束时只发送一次 ModeOff。</summary>
+        private bool _lastModeDisplayActive;
 
         // ---- 职业关键词 / 简介文本的广播节流 ----
         // 文本是静态的（每个职业码一份）：出现新职业、快照参与者 / 职业变化时立即重发，
@@ -1558,6 +1567,10 @@ namespace RollOfTheScout
         // 仅在「本机安装本模组、但不是 MasterClient」时使用；不影响主机、也不影响未装模组的客机。
         private readonly List<KeyValuePair<int, int>> _remoteClasses = new List<KeyValuePair<int, int>>();
         private readonly Dictionary<int, int> _remoteClassMap = new Dictionary<int, int>();
+
+        /// <summary>客机模式：主机广播的玩法模式存活状态（ActorNumber → 0/1/2）。</summary>
+        private readonly List<KeyValuePair<int, int>> _remoteModeStatuses = new List<KeyValuePair<int, int>>();
+        private bool _hasRemoteMode;
         private readonly Dictionary<int, string> _remoteClassNames = new Dictionary<int, string>();
         // 主机广播来的「新职业」关键词 / 简介：本机文案表没有该职业时作为兜底（保证主模组新增职业后，
         // 旧版本地仍能显示介绍，不必同步更新）。
@@ -1592,6 +1605,148 @@ namespace RollOfTheScout
             return _ledger.GetClass(character);
         }
 
+        // ---------------------------------------------------------------
+        // 外置玩法模式（潘多拉大乱斗）桥接
+        // ---------------------------------------------------------------
+
+        /// <summary>该角色是否已有职业账本条目（用于区分「重连玩家」与「新加入者」）。</summary>
+        public bool ModeHasClassEntry(Character character)
+        {
+            string id = _ledger.IdOf(character);
+            return !string.IsNullOrEmpty(id) && _ledger.TryGet(id, out _);
+        }
+
+        /// <summary>稳定标识（复用账本的 PhotonView 缓存，避免外置模式每帧重复分配候选列表）。</summary>
+        public string ModeStableId(Character character)
+        {
+            return _ledger.IdOf(character);
+        }
+
+        /// <summary>
+        /// 静默强制分配职业：绕过「最大人数 / 权重 / 随机分配」，且**不显示职业分配提示**。
+        /// 仅由外置玩法模式调用；不执行转职的清负面流程（模式需要保留玩家当前状态）。
+        /// </summary>
+        public bool ModeForceAssign(Character character, ClassType type)
+        {
+            if (!PhotonNetwork.IsMasterClient || character == null) return false;
+
+            string id = _ledger.IdOf(character);
+            if (string.IsNullOrEmpty(id)) return false;
+
+            if (!_ledger.ForceSet(character, type)) return false;
+
+            _wasDead[id] = IsTrueDead(character);
+            _initialStatusDone.Remove(id);
+            _initialApplied.Remove(id);
+            _displaySyncDirty = true;
+            Plugin.Log.LogInfo($"[RollOfTheScout] 潘多拉模式：{Nick(character)} 强制设为 {ClassLedger.Describe(type)}。");
+            return true;
+        }
+
+        /// <summary>清空全部职业（保留玩家物品 / 状态），用于每关开场与赢家判定。</summary>
+        public void ModeClearClasses()
+        {
+            ModeClearClassesInternal();
+        }
+
+        /// <summary>内部清空职业账本与开局类发放记账；不重置本局死亡追踪。</summary>
+        private void ModeClearClassesInternal()
+        {
+            _ledger.Clear();
+            _initialStatusDone.Clear();
+            _initialApplied.Clear();
+            _levelGranted.Clear();
+            _levelGrantAttempts.Clear();
+            _avatarApplied.Clear();
+            _avatarNextCheck.Clear();
+            _reclassUsed.Clear();
+            _reclassGuardUntil.Clear();
+            _displaySyncDirty = true;
+            _classListSignature = int.MinValue;
+            _classListLinesCache = null;
+            InvalidateClassIntroCache();
+        }
+
+        /// <summary>给目标施加一次主模组既有的「无敌（奶白金）」效果。</summary>
+        public void ModeGrantInvincible(Character character, string reason)
+        {
+            if (character == null) return;
+            FeedTransientItem(character, ItemNames.FortifiedMilk,
+                string.IsNullOrEmpty(reason) ? "潘多拉模式" : reason);
+        }
+
+        /// <summary>主机屏幕提示 + 强制广播给客机（不受职业显示网络同步开关影响）。</summary>
+        public void ModeShowToast(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            ShowToast(text);
+            ClassDisplayNet.BroadcastModeToast(text);
+        }
+
+        /// <summary>请求尽快重发一次显示快照（模式开关 / 存活状态变化时调用）。</summary>
+        public void ModeRequestDisplaySync()
+        {
+            _displaySyncDirty = true;
+            _classListSignature = int.MinValue;
+            _classListLinesCache = null;
+        }
+
+        /// <summary>重置潘多拉效果的周期计时（准备期结束时调用，避免准备期内累积到立即触发）。</summary>
+        public void ModeResetPandoraTimers()
+        {
+            _pandoraTimer = 0f;
+            _pandoraCurseTimer = 0f;
+        }
+
+        /// <summary>
+        /// 生成一名童军领队并强制追击指定玩家若干秒。本模式**不**使用【众魂阻挠】的 4 名全场上限；
+        /// 返回 PhotonView 供外置模式在目标死亡 / 被传送 / 退出时让其立即逃离。
+        /// </summary>
+        public PhotonView ModeSpawnScoutmaster(Character target, float distance, float chaseSeconds)
+        {
+            if (!PhotonNetwork.IsMasterClient || target == null || target.photonView == null) return null;
+
+            float dist = Mathf.Max(1f, distance);
+            float chase = Mathf.Max(0.1f, chaseSeconds);
+            Vector2 dir = Random.insideUnitCircle;
+            if (dir.sqrMagnitude < 0.0001f) dir = Vector2.right;
+            dir = dir.normalized * dist;
+            Vector3 pos = target.Center + new Vector3(dir.x, 0f, dir.y);
+
+            GameObject go;
+            try
+            {
+                go = PhotonNetwork.InstantiateRoomObject(ItemNames.Scoutmaster, pos, Quaternion.identity, 0);
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogWarning($"[RollOfTheScout] 潘多拉模式：童军领队生成失败：{e.Message}");
+                return null;
+            }
+            if (go == null) return null;
+
+            var view = go.GetComponent<PhotonView>();
+            if (view != null) StartCoroutine(ModeInitScoutmaster(go, target, pos, chase));
+            return view;
+        }
+
+        private IEnumerator ModeInitScoutmaster(GameObject go, Character target, Vector3 pos, float chase)
+        {
+            var view = go.GetComponent<PhotonView>();
+            for (int i = 0; i < 12 && view == null; i++)
+            {
+                yield return new WaitForSeconds(0.25f);
+                if (go == null) yield break;
+                view = go.GetComponent<PhotonView>();
+            }
+            if (view == null || target == null || target.photonView == null) yield break;
+            if (target.data == null || target.data.dead || target.data.fullyPassedOut) yield break;
+
+            view.RPC("WarpPlayerRPC", RpcTarget.All, pos, false);
+            if (target.photonView.ViewID > 0)
+                view.RPC("RPCA_SetCurrentTarget", RpcTarget.All, target.photonView.ViewID, chase);
+        }
+
         /// <summary>
         /// 玩家食用「转职物品」（默认诡异菇 Mushroom Glow）后触发转职。
         /// 规则：在该玩家**当前未占满名额的其他职业**中按权重随机重新分配一个；
@@ -1623,6 +1778,8 @@ namespace RollOfTheScout
         {
             if (!_inRun) return;
             if (character == null) return;
+            // 外置玩法模式（潘多拉大乱斗）完全禁止转职（含转职物品 / 表情）。
+            if (PandoraModeBridge.ReclassDisabled) return;
             if (!ModConfig.General.ReclassEnabled.Value) return;
 
             string id = _ledger.IdOf(character);
@@ -2343,12 +2500,19 @@ namespace RollOfTheScout
             if (_pendingNewLevel)
             {
                 _pendingNewLevel = false;
+                LevelSerial++;
+
+                // 外置玩法模式（潘多拉大乱斗）：每关先把旧职业全部清空，再让模式接管。
+                // 必须在 OnMilesSoulNewLevel / GrantLevelItems 之前，避免旧职业残留一帧。
+                if (PandoraModeBridge.SuppressAssignments) ModeClearClassesInternal();
+
                 _levelGranted.Clear();
                 _levelGrantAttempts.Clear();
                 _avatarApplied.Clear();
                 _avatarNextCheck.Clear();
                 // 迈尔斯残魂·众魂阻挠：每次进入新关卡 +诅咒（进入天底则不加，由该方法内部判定）
                 OnMilesSoulNewLevel(characters);
+                PandoraModeBridge.RaiseNewLevelStarted(LevelSerial);
                 Plugin.Log.LogInfo("[RollOfTheScout] 进入新关卡，重新发放先驱/医生背包、死灵法师骸骨之书、旗手检查点旗标，并重新套用待皓化身。");
             }
 
@@ -2382,6 +2546,7 @@ namespace RollOfTheScout
         {
             _inRun = true;
             _pendingNewLevel = true;
+            LevelSerial = 0;
             _assignErrorLogged = false;
             _pollTimer = 0f;
             _inspireTimer = 0f;
@@ -2601,9 +2766,12 @@ namespace RollOfTheScout
             // 否则回到机场（大厅）后仍会显示上一局的职业分配（该清空不能受下方 _inRun 早退影响）。
             _remoteClasses.Clear();
             _remoteClassMap.Clear();
+            _remoteModeStatuses.Clear();
             _remoteClassKeywords.Clear();
             _remoteClassIntro.Clear();
             _hasRemoteSnapshot = false;
+            _hasRemoteMode = false;
+            _lastModeDisplayActive = false;
             _displaySyncDirty = false;
             _nextDisplaySyncTime = 0f;
             _lastClassTextHash = 0;
@@ -2612,6 +2780,10 @@ namespace RollOfTheScout
             InvalidateClassIntroCache();
             _classListSignature = int.MinValue;
             _classListLinesCache = null;
+
+            // 一局结束：清除外置玩法模式的运行时覆盖。附属模组会在机场重新按配置决定下一局是否启用。
+            LevelSerial = 0;
+            PandoraModeBridge.Reset();
 
             if (!_inRun) return;
             _inRun = false;
@@ -2834,6 +3006,9 @@ namespace RollOfTheScout
             // （BepInEx: Unable to start Unity log writer），异常不会落到日志里。这里兜底记录一次，便于定位。
             try
             {
+                // 外置玩法模式（潘多拉大乱斗）暂停随机分配：职业由模式自行强制设置。
+                if (PandoraModeBridge.SuppressAssignments) return;
+
                 // 全部职业名额已满 → 剩余玩家不分配职业（其职业保持为「无」）
                 if (_ledger.IsFull()) return;
 
@@ -7797,7 +7972,8 @@ namespace RollOfTheScout
 
             // ---- 潘多拉：定时对半径内的玩家施加潘多拉魔盒（是否含自己由配置决定）----
             _pandoraTimer += dt;
-            float pandoraInterval = Mathf.Max(1f, ModConfig.Pandora.BoxIntervalSeconds.Value);
+            float pandoraInterval = Mathf.Max(1f, PandoraModeBridge.EffectivePandoraBoxIntervalSeconds(
+                ModConfig.Pandora.BoxIntervalSeconds.Value));
             if (_pandoraTimer >= pandoraInterval)
             {
                 _pandoraTimer = 0f;
@@ -9567,7 +9743,12 @@ namespace RollOfTheScout
                 _tricksterTransferPending.RemoveAt(0);
 
                 if (pending == null || pending.From == null || pending.To == null) continue;
-                TransferOneRandomItem(pending.From, pending.To);
+                if (!TransferOneRandomItem(pending.From, pending.To))
+                {
+                    // 目标仍处于死亡哨兵坐标等不可生成位置：保留条目，稍后重试（来源物品尚未被销毁）。
+                    pending.ApplyAt = now + Mathf.Max(1f, ModConfig.Trickster.TrickTransferIntervalSeconds.Value);
+                    _tricksterTransferPending.Add(pending);
+                }
             }
         }
 
@@ -9594,17 +9775,17 @@ namespace RollOfTheScout
 
         /// <summary>
         /// 【捣蛋·转移】：从目标玩家的 3 个物品栏中随机取 1 件物品，销毁原物品后转交给捣蛋鬼
-        /// （优先进捣蛋鬼的空物品栏，已满则在捣蛋鬼脚下生成）。
+        /// （优先进捣蛋鬼的空物品栏，已满则放进其已装备背包，均已满则在其脚下生成）。
         ///
-        /// 清空走原版 <c>Player.EmptySlot(slot, andBroadcast:true)</c>：主机调用时会先本地清空、
-        /// 再向 Others 广播 <c>SyncInventoryRPC</c>，因此客机零安装也能看到物品被拿走。
+        /// 清空走原版 <c>Player.EmptySlot(slot, andBroadcast:true)</code>；但**先确认收下成功再清空来源**，
+        /// 且脚下生成失败时返回 false 由队列重试，避免物品在两边都没落地就消失。
         /// 随机取用「蓄水池抽样」，不额外分配列表。
         /// </summary>
-        private void TransferOneRandomItem(Character from, Character to)
+        private bool TransferOneRandomItem(Character from, Character to)
         {
-            if (from == null || to == null) return;
+            if (from == null || to == null) return true;
             var inventory = from.player;
-            if (inventory == null || inventory.itemSlots == null) return;
+            if (inventory == null || inventory.itemSlots == null) return true;
 
             int slotCount = Mathf.Min(3, inventory.itemSlots.Length);   // 只取 3 个物品栏，不含背包槽
             int pick = -1;
@@ -9619,27 +9800,36 @@ namespace RollOfTheScout
             if (pick < 0)
             {
                 Plugin.Log.LogInfo($"[RollOfTheScout] 捣蛋·转移：{Nick(from)} 的物品栏没有可转移的物品。");
-                return;
+                return true;
             }
 
             var prefab = inventory.itemSlots[pick].prefab;
             string name = PrefabNameOf(prefab);
-            if (string.IsNullOrEmpty(name)) return;
+            if (string.IsNullOrEmpty(name)) return true;
 
-            inventory.EmptySlot(Optionable<byte>.Some((byte)pick), true);
-
-            // 收纳顺序：捣蛋鬼空物品栏 → 已装备背包（普通 / 滑稽背包）→ 脚下生成
-            if (HostApi.GiveItemToInventorySlots(to, name, out _))
+            // 收纳顺序：捣蛋鬼空物品栏 → 已装备背包（普通 / 滑稽背包）→ 脚下生成。
+            // 三种路径都先确认目标收到物品，再清空来源槽，避免中途失败导致两边都没有。
+            if (HostApi.GiveItemToInventorySlots(to, prefab, out _))
             {
+                inventory.EmptySlot(Optionable<byte>.Some((byte)pick), true);
                 Plugin.Log.LogInfo($"[RollOfTheScout] 捣蛋·转移：{Nick(from)} 的物品 {name} 被转交给 {Nick(to)}。");
             }
-            else if (HostApi.TryGiveItemToBackpack(to, name))
+            else if (HostApi.TryGiveItemToBackpack(to, from, (byte)pick))
             {
+                // 原版 RPC 会先让各客户端从来源槽读取并写入背包，随后再清空来源槽（RPC 顺序保证）。
+                inventory.EmptySlot(Optionable<byte>.Some((byte)pick), true);
                 Plugin.Log.LogInfo($"[RollOfTheScout] 捣蛋·转移：{Nick(from)} 的物品 {name} 转交 {Nick(to)} 时物品栏已满，已放入其背包。");
             }
             else
             {
-                HostApi.SpawnItemAtFeet(to, name);
+                GameObject spawned = HostApi.SpawnItemAtFeet(to, name);
+                if (spawned == null)
+                {
+                    Plugin.Log.LogWarning(
+                        $"[RollOfTheScout] 捣蛋·转移：{Nick(to)} 当前无法在脚下生成物品（可能处于死亡哨兵坐标），本次先保留 {Nick(from)} 的物品并稍后重试。");
+                    return false;
+                }
+                inventory.EmptySlot(Optionable<byte>.Some((byte)pick), true);
                 Plugin.Log.LogInfo(
                     $"[RollOfTheScout] 捣蛋·转移：{Nick(from)} 的物品 {name} 转交 {Nick(to)} 时物品栏与背包均已满，改为生成在其脚下。");
             }
@@ -9649,6 +9839,7 @@ namespace RollOfTheScout
             ShowTricksterNotice(to, from,
                 $"Trickster {Nick(to)} stole {Nick(from)}'s {itemEn}!"
                 + "\n捣蛋鬼 " + Nick(to) + " 抢走了 " + Nick(from) + " 的 " + itemZh + "！");
+            return true;
         }
 
         /// <summary>按「糖果池 + 权重」抽 1 颗糖；配置无效时退回默认三项（混合坚果 5 / 棉花糖 3 / 大棒棒糖 1）。</summary>
@@ -12140,7 +12331,7 @@ namespace RollOfTheScout
         /// </summary>
         private void DoPandora(Character pandora)
         {
-            float radius = ModConfig.Pandora.BoxRadius.Value;
+            float radius = PandoraModeBridge.EffectivePandoraBoxRadius(ModConfig.Pandora.BoxRadius.Value);
             bool includeSelf = ModConfig.Pandora.BoxIncludeSelf.Value;
             var targets = HostApi.GetCharactersInRadius(pandora.Center, radius);
 
@@ -12704,20 +12895,28 @@ namespace RollOfTheScout
                 for (int i = 0; i < characters.Count; i++)
                 {
                     var character = characters[i];
-                    lines.Add($"{Nick(character)}：{ClassLedger.DescribeBilingual(_ledger.GetClass(character))}");
+                    if (PandoraModeBridge.DisplayActive)
+                    {
+                        lines.Add($"{Nick(character)}：{PandoraModeBridge.StatusName(PandoraModeBridge.StatusOf(character))}");
+                    }
+                    else
+                    {
+                        lines.Add($"{Nick(character)}：{ClassLedger.DescribeBilingual(_ledger.GetClass(character))}");
+                    }
                 }
             }
             else
             {
                 // 客机：按主机广播的 ActorNumber → 昵称（与主机的 PhotonView.Owner.NickName 完全一致）
                 var room = PhotonNetwork.CurrentRoom;
-                for (int i = 0; i < _remoteClasses.Count; i++)
+                var source = _hasRemoteMode ? _remoteModeStatuses : _remoteClasses;
+                for (int i = 0; i < source.Count; i++)
                 {
-                    var kv = _remoteClasses[i];
+                    var kv = source[i];
                     var player = room != null ? room.GetPlayer(kv.Key) : null;
                     string name = player != null && !string.IsNullOrEmpty(player.NickName)
                         ? player.NickName : $"#{kv.Key}";
-                    lines.Add($"{name}：{RemoteClassNameOf(kv.Value)}");
+                    lines.Add($"{name}：{(_hasRemoteMode ? PandoraModeBridge.StatusName(kv.Value) : RemoteClassNameOf(kv.Value))}");
                 }
             }
 
@@ -12738,6 +12937,7 @@ namespace RollOfTheScout
                 int sig = PhotonNetwork.IsMasterClient ? 19 : 23;
                 if (PhotonNetwork.IsMasterClient)
                 {
+                    sig = sig * 31 + (PandoraModeBridge.DisplayActive ? 1 : 0);
                     var all = Character.AllCharacters;
                     if (all != null)
                     {
@@ -12747,7 +12947,9 @@ namespace RollOfTheScout
                             if (c == null || c.inAirport) continue;
                             if (c.photonView == null || c.photonView.Owner == null) continue;
                             sig = sig * 31 + c.photonView.ViewID;
-                            sig = sig * 31 + (int)_ledger.GetClass(c);
+                            sig = sig * 31 + (PandoraModeBridge.DisplayActive
+                                ? PandoraModeBridge.StatusOf(c)
+                                : (int)_ledger.GetClass(c));
                             string name = c.characterName;
                             if (!string.IsNullOrEmpty(name)) sig = sig * 31 + name.GetHashCode();
                         }
@@ -12755,10 +12957,12 @@ namespace RollOfTheScout
                 }
                 else
                 {
+                    sig = sig * 31 + (_hasRemoteMode ? 1 : 0);
                     var room = PhotonNetwork.CurrentRoom;
-                    for (int i = 0; i < _remoteClasses.Count; i++)
+                    var source = _hasRemoteMode ? _remoteModeStatuses : _remoteClasses;
+                    for (int i = 0; i < source.Count; i++)
                     {
-                        var kv = _remoteClasses[i];
+                        var kv = source[i];
                         sig = sig * 31 + kv.Key;
                         sig = sig * 31 + kv.Value;
                         var player = room != null ? room.GetPlayer(kv.Key) : null;
@@ -12773,10 +12977,34 @@ namespace RollOfTheScout
         /// <summary>把「当前职业分配情况」广播给安装了本模组 / 附属模组（RollOfTheScoutClient）的客机。</summary>
         private void PublishClassSnapshot()
         {
-            if (_ledger.Count == 0) return;
-
             var characters = HostApi.GetActiveCharacters();
             if (characters.Count == 0) return;
+
+            bool modeDisplay = PandoraModeBridge.DisplayActive;
+
+            // 玩法模式：先发「存活状态」快照（强制发送，不受职业显示网络同步开关影响）。
+            if (modeDisplay)
+            {
+                var modePairs = new List<KeyValuePair<int, int>>(characters.Count);
+                foreach (var character in characters)
+                {
+                    var owner = character.photonView != null ? character.photonView.Owner : null;
+                    if (owner == null) continue;
+                    modePairs.Add(new KeyValuePair<int, int>(
+                        owner.ActorNumber, PandoraModeBridge.StatusOf(character)));
+                }
+                if (modePairs.Count > 0) ClassDisplayNet.BroadcastModeSnapshot(modePairs);
+            }
+            else if (_lastModeDisplayActive)
+            {
+                // 模式结束：显式关闭客机的存活状态面板，让它们恢复普通职业面板。
+                ClassDisplayNet.BroadcastModeOff();
+            }
+            _lastModeDisplayActive = modeDisplay;
+
+            // 模式准备期内账本为空，但仍要发一份「全员无职业」的普通快照，
+            // 否则客机可能一直保留上一关的职业码 / 头顶前缀。
+            if (_ledger.Count == 0 && !modeDisplay) return;
 
             var pairs = new List<KeyValuePair<int, int>>(characters.Count);
             var names = new List<KeyValuePair<int, string>>();
@@ -12874,6 +13102,18 @@ namespace RollOfTheScout
                         _remoteClassMap[kv.Key] = kv.Value;
                     }
                     _hasRemoteSnapshot = _remoteClasses.Count > 0;
+                }
+                else if (kind == ClassDisplayNet.KindModeSnapshot)
+                {
+                    _remoteModeStatuses.Clear();
+                    foreach (var kv in ClassDisplayNet.ParseSnapshot(data))
+                        _remoteModeStatuses.Add(kv);
+                    _hasRemoteMode = _remoteModeStatuses.Count > 0;
+                }
+                else if (kind == ClassDisplayNet.KindModeOff)
+                {
+                    _remoteModeStatuses.Clear();
+                    _hasRemoteMode = false;
                 }
                 else if (kind == ClassDisplayNet.KindClassNames)
                 {
@@ -12983,7 +13223,9 @@ namespace RollOfTheScout
             // 面板：仅在「已按键显示 + 模组启用 + 有可显示数据」时显示。
             bool visible = ClassListVisible()
                 && ModConfig.General.Enabled.Value
-                && (PhotonNetwork.IsMasterClient ? _ledger.Count > 0 : _hasRemoteSnapshot);
+                && (PhotonNetwork.IsMasterClient
+                    ? (_ledger.Count > 0 || PandoraModeBridge.DisplayActive)
+                    : (_hasRemoteSnapshot || _hasRemoteMode));
 
             if (!visible)
             {
@@ -13099,11 +13341,12 @@ namespace RollOfTheScout
 
             if (PhotonNetwork.IsMasterClient)
             {
-                if (_ledger.Count == 0) return;
+                if (_ledger.Count == 0 && !PandoraModeBridge.DisplayActive) return;
             }
             else
             {
-                if (!_hasRemoteSnapshot) return;   // 客机模式：尚未收到主机广播，暂不显示
+                // 客机模式：普通职业快照或玩法模式状态快照至少有一个才显示
+                if (!_hasRemoteSnapshot && !_hasRemoteMode) return;
             }
 
             // ⚠ 不能对缓存列表做 Insert：BuildClassListLines 返回的是**缓存列表本身**，

@@ -463,6 +463,20 @@ namespace RollOfTheScout
             return true;
         }
 
+        /// <summary>
+        /// 强制写入任意职业（含 <see cref="ClassType.None"/>）：用于外置玩法模式把单个玩家「重置为无职业」，
+        /// 同时保留账本条目，使普通职业面板仍能显示「None · 无职业」。
+        /// </summary>
+        public bool ForceSet(Character character, ClassType type)
+        {
+            string id = IdOf(character);
+            if (string.IsNullOrEmpty(id)) return false;
+            if (_byId.TryGetValue(id, out var current) && current == type) return false;
+
+            SetEntry(id, type);
+            return true;
+        }
+
         private static string Nick(Character character)
         {
             if (character == null || character.photonView == null || character.photonView.Owner == null) return "?";
@@ -637,7 +651,9 @@ namespace RollOfTheScout
                 case ClassType.Logistician: return Mathf.Max(0, ModConfig.Logistician.MaxPlayers.Value);
                 case ClassType.Doctor: return Mathf.Max(0, ModConfig.Doctor.MaxPlayers.Value);
                 case ClassType.Assassin: return Mathf.Max(0, ModConfig.Assassin.MaxPlayers.Value);
-                case ClassType.Pandora: return Mathf.Max(0, ModConfig.Pandora.MaxPlayers.Value);
+                case ClassType.Pandora:
+                    return PandoraModeBridge.EffectivePandoraMaxPlayers(
+                        Mathf.Max(0, ModConfig.Pandora.MaxPlayers.Value));
                 case ClassType.Necromancer: return Mathf.Max(0, ModConfig.Necromancer.MaxPlayers.Value);
                 case ClassType.M: return Mathf.Max(0, ModConfig.M.MaxPlayers.Value);
                 case ClassType.Savage: return Mathf.Max(0, ModConfig.Savage.MaxPlayers.Value);
